@@ -1,4 +1,4 @@
-# onekvm-machine-nanokvm
+# onekvm-nanokvm-machine
 
 English | [简体中文](README.zh-CN.md)
 
@@ -30,6 +30,7 @@ make
 The complete target package is built by the `onekvm-machine-nanokvm` recipe in
 the `meta-onekvm` layer. Yocto packaging remains in `onekvm-distro` because it
 contains distribution-specific dependencies, paths, and upgrade handling.
+The recipe keeps its existing package name for upgrade compatibility.
 
 ## License
 
