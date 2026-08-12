@@ -32,4 +32,6 @@ Yocto 配方仍保留在 `onekvm-distro`，因为其中包含发行版专用依�
 
 ## 许可证
 
-GPL-2.0-only，详见 [LICENSE](LICENSE)。
+用户空间生命周期文件使用 MIT 许可证；机器检测程序和 early OLED 内核模块
+使用 GPL-2.0-only。详见 [LICENSE](LICENSE) 和
+[LICENSES/MIT.txt](LICENSES/MIT.txt)。

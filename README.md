@@ -33,4 +33,6 @@ contains distribution-specific dependencies, paths, and upgrade handling.
 
 ## License
 
-GPL-2.0-only. See [LICENSE](LICENSE).
+Userspace lifecycle files are MIT licensed. The machine detector and early
+OLED kernel module are GPL-2.0-only. See [LICENSE](LICENSE) and
+[LICENSES/MIT.txt](LICENSES/MIT.txt).
