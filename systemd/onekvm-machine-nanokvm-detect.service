@@ -1,0 +1,14 @@
+[Unit]
+Description=Detect NanoKVM board variant and optional hardware
+After=systemd-modules-load.service
+Before=onekvm.service
+ConditionPathExists=/usr/share/onekvm/machine.json
+ConditionPathExists=/sys/class/gpio/export
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/onekvm/onekvm-machine-nanokvm-detect
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

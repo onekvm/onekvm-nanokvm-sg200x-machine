@@ -1,0 +1,8 @@
+{
+  "power_button": { "chip": "/dev/gpiochip0", "offset": 23 },
+  "reset_button": { "chip": "/dev/gpiochip0", "offset": 25 },
+  "pwr_led": { "chip": "/dev/gpiochip0", "offset": 24, "active_low": true },
+  "power_short_ms": 800,
+  "power_long_ms": 5000,
+  "reset_pulse_ms": 800
+}

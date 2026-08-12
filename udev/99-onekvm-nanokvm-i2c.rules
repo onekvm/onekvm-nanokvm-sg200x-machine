@@ -1,0 +1,1 @@
+KERNEL=="i2c-[15]", GROUP="onekvm-extension", MODE="0660"

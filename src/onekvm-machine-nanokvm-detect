@@ -1,0 +1,151 @@
+#!/bin/sh
+
+set -eu
+
+probe=/usr/libexec/onekvm/onekvm-machine-nanokvm-i2c-probe
+runtime_dir=/run/onekvm
+hardware_file=${runtime_dir}/hardware.json
+gpio_atx_default=${runtime_dir}/gpio-atx-default.json
+spi_driver=/sys/bus/platform/drivers/spi_gpio
+
+set_gpio_high() {
+    gpio=$1
+    path=/sys/class/gpio/gpio${gpio}
+    if [ ! -d "$path" ]; then
+        printf '%s\n' "$gpio" >/sys/class/gpio/export 2>/dev/null || true
+    fi
+    if [ -d "$path" ]; then
+        printf '%s\n' high >"$path/direction"
+        if [ "$(cat "$path/value")" != 1 ]; then
+            printf '%s\n' 1 >"$path/value"
+        fi
+    fi
+}
+
+probe_oled() {
+    [ -c "$1" ] && "$probe" "$1" "$2"
+}
+
+prepare_i2c5() {
+    if [ ! -e /dev/i2c-5 ]; then
+        modprobe i2c-gpio
+        attempt=0
+        while [ ! -e /dev/i2c-5 ]; do
+            attempt=$((attempt + 1))
+            [ "$attempt" -lt 50 ] || return 1
+            sleep 0.1
+        done
+    fi
+    chgrp onekvm-extension /dev/i2c-5 2>/dev/null || true
+    chmod 0660 /dev/i2c-5
+}
+
+restore_sdio_pins() {
+    devmem 0x030010E4 32 0x0 >/dev/null
+    devmem 0x030010E0 32 0x0 >/dev/null
+    devmem 0x030010DC 32 0x0 >/dev/null
+    devmem 0x030010D8 32 0x0 >/dev/null
+    devmem 0x030010D4 32 0x0 >/dev/null
+    devmem 0x030010D0 32 0x0 >/dev/null
+}
+
+detect_wifi() {
+    # GPIOA26 is the optional Realtek SDIO module's enable line. The CVITEK
+    # 5.10 SDHCI driver cannot safely be unbound when no card is present, so
+    # rely on the non-removable host's boot-time enumeration and inspect the
+    # physical SDIO vendor ID without loading a Wi-Fi network driver.
+    devmem 0x0300104C 32 0x3 >/dev/null
+    set_gpio_high 506
+
+    attempt=0
+    while [ "$attempt" -lt 5 ]; do
+        for candidate in /sys/bus/sdio/devices/*; do
+            [ -e "$candidate/vendor" ] || continue
+            vendor=$(cat "$candidate/vendor")
+            case "$vendor" in
+                0x024c|024c) return 0 ;;
+            esac
+        done
+        [ -e /sys/class/net/wlan0 ] && return 0
+        attempt=$((attempt + 1))
+        sleep 0.1
+    done
+    return 1
+}
+
+mkdir -p "$runtime_dir"
+
+# ATX front-panel lines are GPIOA23/A24/A25/A27. The GPIO backend owns the
+# lines through /dev/gpiochip4; the machine probe only selects their pad mux.
+devmem 0x0300105C 32 0x3 >/dev/null
+devmem 0x03001060 32 0x3 >/dev/null
+devmem 0x03001054 32 0x3 >/dev/null
+devmem 0x03001058 32 0x3 >/dev/null
+
+variant=lite
+revision=unknown
+oled=false
+wifi=false
+
+# Alpha Cube routes its OLED over the SoC I2C1 controller. These pads overlap
+# the later boards' SDIO bus, so test Alpha first and restore SDIO on failure.
+devmem 0x030010D0 32 0x2 >/dev/null
+devmem 0x030010DC 32 0x2 >/dev/null
+devmem 0x030010D4 32 0x3 >/dev/null
+set_gpio_high 371
+chgrp onekvm-extension /dev/i2c-1 2>/dev/null || true
+chmod 0660 /dev/i2c-1
+
+if probe_oled /dev/i2c-1 0x3d; then
+    variant=cube
+    revision=alpha
+    oled=true
+else
+    [ ! -d /sys/class/gpio/gpio371 ] || printf '%s\n' 371 >/sys/class/gpio/unexport 2>/dev/null || true
+    restore_sdio_pins
+
+    prepare_i2c5
+    if [ -e "$spi_driver/spi4@gpio" ]; then
+        printf '%s\n' spi4@gpio >"$spi_driver/unbind"
+    fi
+    devmem 0x03001050 32 0x3 >/dev/null
+    set_gpio_high 502
+
+    if probe_oled /dev/i2c-5 0x3c; then
+        variant=pcie
+        revision=pcie
+        oled=true
+    elif probe_oled /dev/i2c-5 0x3d; then
+        variant=cube
+        revision=beta
+        oled=true
+    fi
+
+    if detect_wifi; then
+        wifi=true
+    fi
+fi
+
+temporary=${hardware_file}.tmp.$$
+umask 022
+printf '{\n  "variant": "%s",\n  "revision": "%s",\n  "detected": {\n    "oled": %s,\n    "wifi": %s\n  }\n}\n' \
+    "$variant" "$revision" "$oled" "$wifi" >"$temporary"
+chmod 0644 "$temporary"
+mv -f "$temporary" "$hardware_file"
+
+gpio_profile=$revision
+case "$gpio_profile" in
+    alpha|beta|pcie) ;;
+    *) gpio_profile=$variant ;;
+esac
+case "$gpio_profile" in
+    alpha|beta|pcie|lite) ;;
+    *) gpio_profile=lite ;;
+esac
+gpio_temporary=${gpio_atx_default}.tmp.$$
+cp "/usr/share/onekvm/gpio-atx/${gpio_profile}.json" "$gpio_temporary"
+chmod 0644 "$gpio_temporary"
+mv -f "$gpio_temporary" "$gpio_atx_default"
+
+printf 'NanoKVM hardware: variant=%s revision=%s oled=%s wifi=%s gpio_atx=%s\n' \
+    "$variant" "$revision" "$oled" "$wifi" "$gpio_profile"
