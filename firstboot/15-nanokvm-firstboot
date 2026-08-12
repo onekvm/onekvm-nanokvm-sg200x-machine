@@ -1,0 +1,323 @@
+#!/bin/sh
+
+# NanoKVM first-boot A/B storage migration. This module is intentionally
+# installed only in the NanoKVM initramfs.
+
+nanokvm_enabled() {
+    return 0
+}
+
+nanokvm_die() {
+    fatal "OneKVM NanoKVM storage migration: $1"
+}
+
+nanokvm_wait_for_block() {
+    path=$1
+    count=0
+    while [ ! -b "$path" ] && [ "$count" -lt 100 ]; do
+        sleep 0.1
+        count=$((count + 1))
+    done
+    [ -b "$path" ]
+}
+
+nanokvm_partition_matches() {
+    number=$1
+    expected_start=$2
+    expected_size=$3
+    sys_partition="/sys/class/block/${disk_name}p${number}"
+
+    [ -e "$sys_partition/start" ] && [ -e "$sys_partition/size" ] ||
+        return 1
+    read -r actual_start <"$sys_partition/start"
+    read -r actual_size <"$sys_partition/size"
+    [ "$actual_start" -eq "$expected_start" ] &&
+        [ "$actual_size" -eq "$expected_size" ]
+}
+
+nanokvm_partition_starts_at() {
+    number=$1
+    expected_start=$2
+    sys_partition="/sys/class/block/${disk_name}p${number}"
+
+    [ -e "$sys_partition/start" ] || return 1
+    read -r actual_start <"$sys_partition/start"
+    [ "$actual_start" -eq "$expected_start" ]
+}
+
+nanokvm_partition_size() {
+    number=$1
+    sys_partition="/sys/class/block/${disk_name}p${number}"
+
+    [ -e "$sys_partition/size" ] || return 1
+    read -r actual_size <"$sys_partition/size"
+    printf '%s\n' "$actual_size"
+}
+
+nanokvm_filesystem_type() {
+    blkid -p -s TYPE -o value "$1" 2>/dev/null || true
+}
+
+nanokvm_start_oled() {
+    oled_loaded=false
+    if insmod /usr/lib/onekvm-initramfs/onekvm-installing-oled.ko mode=install 2>/dev/null; then
+        oled_loaded=true
+        msg "OneKVM: Install OS OLED canvas enabled (3 second blink)"
+    else
+        info "OneKVM: Installing OLED is not available on this board"
+    fi
+}
+
+nanokvm_stop_oled() {
+    if [ "$oled_loaded" = true ]; then
+        rmmod onekvm_installing_oled ||
+            msg "OneKVM: warning: could not release Installing OLED module"
+        oled_loaded=false
+    fi
+}
+
+nanokvm_copy_root_to_ram() {
+    mkdir -p "$migration_dir"
+    # SquashFS stores bytes_used as a little-endian 64-bit value at offset 40.
+    # NanoKVM images are below 4 GiB, so the upper two 16-bit words must be 0.
+    set -- $(dd if="$root_a" bs=1 skip=40 count=8 2>/dev/null |
+        od -d | sed -n '1p')
+    [ "$#" -eq 5 ] ||
+        nanokvm_die "could not read the rootfs A SquashFS size"
+    rootfs_word0=$2
+    rootfs_word1=$3
+    rootfs_word2=$4
+    rootfs_word3=$5
+    case "$rootfs_word0:$rootfs_word1:$rootfs_word2:$rootfs_word3" in
+        *[!0-9:]*) nanokvm_die "rootfs A SquashFS size is invalid" ;;
+    esac
+    [ "$rootfs_word2" -eq 0 ] && [ "$rootfs_word3" -eq 0 ] ||
+        nanokvm_die "rootfs A SquashFS size exceeds 4 GiB"
+    rootfs_bytes_used=$((rootfs_word0 + rootfs_word1 * 65536))
+    [ "$rootfs_bytes_used" -ge 4096 ] &&
+        [ "$rootfs_bytes_used" -le "$root_source_bytes" ] &&
+        [ "$rootfs_bytes_used" -le "$root_slot_bytes" ] ||
+        nanokvm_die "rootfs A SquashFS size is outside the source partition"
+    root_copy_blocks=$(((rootfs_bytes_used + 1048575) / 1048576))
+    root_copy_bytes=$((root_copy_blocks * 1048576))
+    # The installer carrier partition is exactly the SquashFS file size, so
+    # its final 1 MiB read is normally a short record. Installed A/B slots are
+    # larger and still copy a complete final block. Both cases are complete as
+    # long as every byte available up to the rounded SquashFS length was read.
+    if [ "$root_source_bytes" -lt "$root_copy_bytes" ]; then
+        root_copy_bytes=$root_source_bytes
+    fi
+
+    mem_available_kib=0
+    while read -r key value unit; do
+        case "$key" in
+            MemAvailable:) mem_available_kib=$value; break ;;
+        esac
+    done </proc/meminfo
+    required_mem_kib=$(((root_copy_bytes + 1023) / 1024 + 16384))
+    [ "$mem_available_kib" -ge "$required_mem_kib" ] ||
+        nanokvm_die "not enough RAM is available for the protected rootfs copy"
+
+    msg "OneKVM: copying NanoKVM rootfs A into RAM"
+    dd if="$root_a" of="$root_image" bs=1048576 count="$root_copy_blocks" ||
+        nanokvm_die "could not copy rootfs A into RAM"
+    image_bytes=$(wc -c <"$root_image")
+    [ "$image_bytes" -eq "$root_copy_bytes" ] ||
+        nanokvm_die "rootfs A RAM copy is incomplete"
+}
+
+nanokvm_verify_squashfs() {
+    device=$1
+    name=$2
+    verify_mount="$migration_dir/verify-$name"
+    mkdir -p "$verify_mount"
+    mount -t squashfs -o ro "$device" "$verify_mount" ||
+        nanokvm_die "rootfs $name is not a mountable SquashFS"
+    umount "$verify_mount" ||
+        nanokvm_die "could not unmount verified rootfs $name"
+    rmdir "$verify_mount"
+}
+
+nanokvm_refresh_partitions() {
+    sync
+    blockdev --rereadpt "$disk" 2>/dev/null || true
+    partx --update "$disk" 2>/dev/null || true
+    nanokvm_wait_for_block "$root_b" ||
+        nanokvm_die "rootfs B partition did not appear"
+    nanokvm_wait_for_block "$userdata" ||
+        nanokvm_die "userdata partition did not appear"
+}
+
+nanokvm_rebuild_partition_table() {
+    disk_id=$(sfdisk --disk-id "$disk" 2>/dev/null) ||
+        nanokvm_die "could not read the existing DOS disk identifier"
+    case "$disk_id" in
+        0x[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) ;;
+        *) nanokvm_die "invalid DOS disk identifier $disk_id" ;;
+    esac
+
+    msg "OneKVM: rebuilding NanoKVM rootfs A/B and userdata partitions"
+    sfdisk --no-reread --force "$disk" <<EOF ||
+label: dos
+label-id: $disk_id
+unit: sectors
+
+start=$loader_start, size=$loader_size, type=c, bootable
+start=$root_a_start, size=$root_slot_size, type=83
+start=$root_b_start, size=$root_slot_size, type=83
+start=$userdata_start, size=$userdata_size, type=83
+EOF
+        nanokvm_die "could not write the NanoKVM partition table"
+
+    nanokvm_refresh_partitions
+    nanokvm_partition_matches 1 "$loader_start" "$loader_size" ||
+        nanokvm_die "loader partition changed during migration"
+    nanokvm_partition_matches 2 "$root_a_start" "$root_slot_size" ||
+        nanokvm_die "rootfs A partition geometry is incorrect"
+    nanokvm_partition_matches 3 "$root_b_start" "$root_slot_size" ||
+        nanokvm_die "rootfs B partition geometry is incorrect"
+    nanokvm_partition_matches 4 "$userdata_start" "$userdata_size" ||
+        nanokvm_die "userdata partition geometry is incorrect"
+}
+
+nanokvm_write_root_slots() {
+    msg "OneKVM: restoring NanoKVM rootfs B"
+    dd if="$root_image" of="$root_b" bs=1048576 count="$root_copy_blocks" ||
+        nanokvm_die "could not write rootfs B"
+    sync
+    nanokvm_verify_squashfs "$root_b" B
+
+    # A stays at the same sectors throughout the table rewrite. Restore it
+    # last from the protected copy so both slots are byte-identical.
+    msg "OneKVM: restoring NanoKVM rootfs A"
+    dd if="$root_image" of="$root_a" bs=1048576 count="$root_copy_blocks" ||
+        nanokvm_die "could not restore rootfs A"
+    sync
+    nanokvm_verify_squashfs "$root_a" A
+}
+
+nanokvm_make_userdata() {
+    msg "OneKVM: creating NanoKVM userdata filesystem"
+    mkfs.ext4 -F -L userdata \
+        -U 4f4b564d-0000-4000-8000-000000000004 \
+        -m 0 -J size=16 \
+        -O ^orphan_file,^metadata_csum_seed \
+        -E lazy_itable_init=1,lazy_journal_init=1 "$userdata" >/dev/null ||
+        nanokvm_die "could not create the userdata filesystem"
+
+    verify_mount="$migration_dir/verify-userdata"
+    mkdir -p "$verify_mount"
+    mount -t ext4 -o rw "$userdata" "$verify_mount" ||
+        nanokvm_die "userdata is not a mountable ext4 filesystem"
+    sync
+    umount "$verify_mount" ||
+        nanokvm_die "could not unmount verified userdata"
+    rmdir "$verify_mount"
+}
+
+nanokvm_run() {
+    disk=${ONEKVM_NANOKVM_FIRSTBOOT_DISK:-/dev/mmcblk0}
+    disk_name=${disk##*/}
+    case "$disk" in
+        *[0-9]) partition_prefix=${disk}p ;;
+        *) partition_prefix=$disk ;;
+    esac
+    loader=${partition_prefix}1
+    root_a=${partition_prefix}2
+    root_b=${partition_prefix}3
+    userdata=${partition_prefix}4
+    loader_start=1
+    loader_size=65536
+    root_a_start=67584
+    root_slot_size=262144
+    root_slot_bytes=134217728
+    root_b_start=331776
+    userdata_start=593920
+    migration_dir=/run/onekvm-firstboot
+    root_image=$migration_dir/rootfs-a.squashfs
+    oled_loaded=false
+
+    nanokvm_wait_for_block "$disk" || nanokvm_die "SD card was not found"
+    nanokvm_wait_for_block "$loader" ||
+        nanokvm_die "loader partition was not found"
+    nanokvm_wait_for_block "$root_a" ||
+        nanokvm_die "rootfs A partition was not found"
+
+    read -r disk_size <"/sys/class/block/$disk_name/size"
+    userdata_size=$((disk_size - userdata_start))
+    [ "$userdata_size" -ge 65536 ] ||
+        nanokvm_die "SD card is too small for a safe userdata filesystem"
+
+    # Destructive migration is allowed only from the OneKVM loader geometry,
+    # the expected rootfs start sector, and a positively identified SquashFS.
+    # The downloadable image deliberately sizes its sole rootfs partition to
+    # the SquashFS file; only the installed A/B layout uses 128 MiB slots.
+    nanokvm_partition_matches 1 "$loader_start" "$loader_size" ||
+        nanokvm_die "unknown loader partition geometry; refusing migration"
+    nanokvm_partition_starts_at 2 "$root_a_start" ||
+        nanokvm_die "unknown rootfs A start sector; refusing migration"
+    root_a_type=$(nanokvm_filesystem_type "$root_a")
+    [ "$root_a_type" = squashfs ] ||
+        nanokvm_die "rootfs A is not SquashFS; refusing migration"
+
+    p3_present=false
+    p4_present=false
+    [ ! -e "/sys/class/block/${disk_name}p3" ] || p3_present=true
+    [ ! -e "/sys/class/block/${disk_name}p4" ] || p4_present=true
+
+    root_source_size=$(nanokvm_partition_size 2) ||
+        nanokvm_die "could not read the rootfs A partition size"
+    [ "$root_source_size" -gt 0 ] &&
+        [ "$root_source_size" -le "$root_slot_size" ] ||
+        nanokvm_die "rootfs A partition exceeds the installed slot size"
+    root_source_bytes=$((root_source_size * 512))
+
+    if [ "$p3_present" = true ]; then
+        [ "$root_source_size" -eq "$root_slot_size" ] ||
+            nanokvm_die "rootfs A is not an installed 128 MiB slot"
+        nanokvm_partition_matches 3 "$root_b_start" "$root_slot_size" ||
+            nanokvm_die "unknown rootfs B geometry; refusing migration"
+    fi
+    if [ "$p4_present" = true ]; then
+        [ "$p3_present" = true ] ||
+            nanokvm_die "userdata exists without rootfs B; refusing migration"
+        nanokvm_partition_matches 4 "$userdata_start" "$userdata_size" ||
+            nanokvm_die "unknown userdata geometry; refusing migration"
+        userdata_type=$(nanokvm_filesystem_type "$userdata")
+        if [ "$userdata_type" = ext4 ]; then
+            root_b_type=$(nanokvm_filesystem_type "$root_b")
+            if [ "$root_b_type" = squashfs ]; then
+                info "OneKVM: NanoKVM A/B storage layout is complete"
+                return 0
+            fi
+
+            # Preserve an already initialized userdata filesystem. Only the
+            # inactive B slot needs repair in this state.
+            nanokvm_start_oled
+            nanokvm_copy_root_to_ram
+            msg "OneKVM: repairing NanoKVM rootfs B"
+            dd if="$root_image" of="$root_b" bs=1048576 count="$root_copy_blocks" ||
+                nanokvm_die "could not repair rootfs B"
+            sync
+            nanokvm_verify_squashfs "$root_b" B
+            nanokvm_stop_oled
+            rm -f "$root_image"
+            rmdir "$migration_dir" 2>/dev/null || true
+            msg "OneKVM: NanoKVM rootfs B repair complete"
+            return 0
+        fi
+        [ -z "$userdata_type" ] ||
+            nanokvm_die "userdata contains $userdata_type; refusing destructive migration"
+    fi
+
+    nanokvm_start_oled
+    nanokvm_copy_root_to_ram
+    nanokvm_rebuild_partition_table
+    nanokvm_write_root_slots
+    nanokvm_make_userdata
+    sync
+    nanokvm_stop_oled
+    rm -f "$root_image"
+    rmdir "$migration_dir" 2>/dev/null || true
+    msg "OneKVM: NanoKVM A/B storage migration complete"
+}

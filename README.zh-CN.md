@@ -10,6 +10,13 @@
 - Alpha、Beta、PCIe 和 Lite 的 GPIO ATX 配置；
 - OneKVM 机器能力描述；
 - systemd、udev 和内核模块加载配置。
+- 首次启动时迁移为 NanoKVM A/B rootfs 和 userdata 分区布局；
+- initramfs 早期 OLED 状态模块；
+- NanoKVM 存储创建和挂载服务；
+- RAUC slot 健康确认和失败处理。
+
+这些生命周期组件依赖 NanoKVM SD 分区布局、启动标记、GPIO/OLED 拓扑和机器
+服务，因此和机器支持代码放在同一个仓库中维护。
 
 ## 编译
 

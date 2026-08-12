@@ -1,0 +1,9 @@
+[Unit]
+Description=Reject and reboot a failed OneKVM A/B slot
+ConditionKernelCommandLine=|rauc.slot=A
+ConditionKernelCommandLine=|rauc.slot=B
+ConditionKernelCommandLine=!onekvm.recovery
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/onekvm/handle-slot-failure

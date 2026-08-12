@@ -1,0 +1,10 @@
+[Unit]
+Description=Provision NanoKVM persistent partitions
+DefaultDependencies=no
+After=systemd-remount-fs.service
+Before=onekvm-device-nanokvm-storage.service sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/onekvm/provision-nanokvm-storage
+RemainAfterExit=yes

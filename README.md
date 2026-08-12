@@ -11,6 +11,13 @@ The repository provides:
 - Alpha, Beta, PCIe, and Lite GPIO ATX profiles;
 - the OneKVM machine capability description;
 - systemd, udev, and module-loading integration files.
+- first-boot migration to the NanoKVM A/B rootfs and userdata layout;
+- an early initramfs OLED status module;
+- NanoKVM storage provisioning and mount services;
+- RAUC slot health confirmation and failure handling.
+
+These lifecycle components live here because they depend on the NanoKVM SD
+partition layout, boot markers, GPIO/OLED topology, and machine services.
 
 ## Build
 

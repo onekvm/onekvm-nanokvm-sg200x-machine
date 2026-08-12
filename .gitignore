@@ -1,2 +1,8 @@
 *.o
 onekvm-machine-nanokvm-i2c-probe
+*.ko
+*.mod
+*.mod.c
+.*.cmd
+Module.symvers
+modules.order

@@ -1,0 +1,37 @@
+#!/bin/sh
+set -eu
+
+disk=${ONEKVM_STORAGE_DISK:-/dev/mmcblk0}
+case "$disk" in
+    *[0-9]) partition_prefix=${disk}p ;;
+    *) partition_prefix=$disk ;;
+esac
+root_b=${partition_prefix}3
+data=${partition_prefix}4
+root_b_name=${root_b##*/}
+
+created=false
+if [ ! -b "$data" ]; then
+    root_b_end=$(($(cat "/sys/class/block/$root_b_name/start") + $(cat "/sys/class/block/$root_b_name/size")))
+    data_start=$(((root_b_end + 2047) / 2048 * 2048))
+    [ "$(blockdev --getsz "$disk")" -gt "$data_start" ]
+
+    printf 'start=%s, type=83\n' "$data_start" | \
+        sfdisk --no-reread --force --append "$disk"
+    [ -b "$data" ] || partx --add --nr 4 "$disk"
+    sync
+    created=true
+fi
+
+data_type=$(blkid -p -s TYPE -o value "$data" 2>/dev/null || true)
+if [ -z "$data_type" ]; then
+    mkfs.ext4 -F -L userdata -U 4f4b564d-0000-4000-8000-000000000004 \
+        -m 0 -J size=16 \
+        -O ^orphan_file,^metadata_csum_seed \
+        -E lazy_itable_init=1,lazy_journal_init=1 "$data"
+fi
+
+if "$created" && [ "${ONEKVM_STORAGE_NO_REBOOT:-0}" != 1 ]; then
+    sync
+    systemctl --no-block reboot
+fi

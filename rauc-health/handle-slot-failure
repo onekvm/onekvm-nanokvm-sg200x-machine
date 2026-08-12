@@ -1,0 +1,11 @@
+#!/bin/sh
+set -u
+
+if rauc status mark-bad booted; then
+    sync
+    systemctl --no-block reboot
+    exit 0
+fi
+
+echo "unable to reject the booted slot; keeping the system running" >&2
+exit 1

@@ -1,0 +1,17 @@
+[Unit]
+Description=Validate and confirm the booted OneKVM A/B slot
+ConditionKernelCommandLine=|rauc.slot=A
+ConditionKernelCommandLine=|rauc.slot=B
+ConditionKernelCommandLine=!onekvm.recovery
+ConditionKernelCommandLine=!onekvm.nfsroot=1
+After=onekvm.service
+OnFailure=onekvm-rauc-failure.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/onekvm/check-slot-health
+RemainAfterExit=yes
+TimeoutStartSec=45s
+
+[Install]
+WantedBy=multi-user.target

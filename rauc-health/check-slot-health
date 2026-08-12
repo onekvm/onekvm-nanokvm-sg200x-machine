@@ -1,0 +1,49 @@
+#!/bin/sh
+set -eu
+
+slot=
+boot_build_id=
+
+for argument in $(cat /proc/cmdline); do
+    case "$argument" in
+        rauc.slot=A|rauc.slot=B) slot=${argument#rauc.slot=} ;;
+        onekvm.build-id=*) boot_build_id=${argument#onekvm.build-id=} ;;
+    esac
+done
+
+[ -n "$slot" ] || { echo "missing rauc.slot" >&2; exit 1; }
+[ -n "$boot_build_id" ] || { echo "missing boot build ID" >&2; exit 1; }
+
+root_build_id=$(cat /usr/share/onekvm/build-id)
+[ "$boot_build_id" = "$root_build_id" ] || {
+    echo "boot/rootfs build ID mismatch" >&2
+    exit 1
+}
+
+kernel_release=$(uname -r)
+module_build_id=$(cat "/lib/modules/$kernel_release/onekvm-build-id")
+[ "$module_build_id" = "$root_build_id" ] || {
+    echo "kernel/modules build ID mismatch" >&2
+    exit 1
+}
+
+mountpoint -q /boot
+if grep -q " / overlay rw[, ]" /proc/mounts; then
+    grep -q " /rofs squashfs ro[, ]" /proc/mounts
+else
+    mountpoint -q /data
+    grep -q " / squashfs ro[, ]" /proc/mounts
+fi
+
+attempt=0
+while [ "$attempt" -lt 300 ]; do
+    if onekvm-cli show system status >/dev/null 2>&1; then
+        rauc status mark-good
+        exit 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 0.1
+done
+
+echo "OneKVM D-Bus health check timed out" >&2
+exit 1
