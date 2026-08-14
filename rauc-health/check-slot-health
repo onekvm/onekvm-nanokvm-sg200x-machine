@@ -43,7 +43,8 @@ while [ "$attempt" -lt 300 ]; do
         cache_dir=/run/onekvm
         cache=$cache_dir/rauc-status.json
         temporary=$cache.tmp.$$
-        install -d -m 0755 "$cache_dir"
+        mkdir -p "$cache_dir"
+        chmod 0755 "$cache_dir"
         if rauc status --detailed --output-format=json >"$temporary"; then
             chmod 0644 "$temporary"
             mv -f "$temporary" "$cache"
