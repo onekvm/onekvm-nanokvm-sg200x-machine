@@ -16,6 +16,11 @@ The repository provides:
 - NanoKVM storage provisioning and mount services;
 - RAUC slot health confirmation and failure handling.
 
+After boot validation, the RAUC slot state is cached under `/run/onekvm` and
+the RAUC D-Bus service is stopped. Read-only update status requests use the
+cache; update and slot-switch operations invalidate it and activate RAUC on
+demand.
+
 These lifecycle components live here because they depend on the NanoKVM SD
 partition layout, boot markers, GPIO/OLED topology, and machine services.
 

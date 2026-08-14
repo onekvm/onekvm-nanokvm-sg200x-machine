@@ -39,6 +39,19 @@ attempt=0
 while [ "$attempt" -lt 300 ]; do
     if onekvm-cli show system status >/dev/null 2>&1; then
         rauc status mark-good
+
+        cache_dir=/run/onekvm
+        cache=$cache_dir/rauc-status.json
+        temporary=$cache.tmp.$$
+        install -d -m 0755 "$cache_dir"
+        if rauc status --detailed --output-format=json >"$temporary"; then
+            chmod 0644 "$temporary"
+            mv -f "$temporary" "$cache"
+            systemctl stop rauc.service || true
+        else
+            rm -f "$temporary"
+            echo "unable to cache RAUC status; keeping the service available" >&2
+        fi
         exit 0
     fi
     attempt=$((attempt + 1))
