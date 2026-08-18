@@ -86,26 +86,61 @@ variant=lite
 revision=unknown
 oled=false
 wifi=false
+rtos_gpio_owned=false
+rtos_variant=
 
 if [ -r /sys/class/misc/onekvm-oled/variant ]; then
     rtos_variant=$(cat /sys/class/misc/onekvm-oled/variant)
-    case "$rtos_variant" in
-        pcie)
-            variant=pcie
-            revision=pcie
-            oled=true
-            ;;
-        cube-gpio)
-            variant=cube
-            revision=beta
-            oled=true
-            ;;
-        cube-i2c1)
-            variant=cube
-            revision=alpha
-            oled=true
+else
+    # C906L publishes this before Linux. Avoid opening i2c-gpio / pulsing
+    # GPIOA22 (OLED reset) when the small core already owns the panel.
+    # Match hex strings: busybox $((0x...)) is not reliable here.
+    magic=$(devmem 0x8FFF0000 32 2>/dev/null | tr 'A-F' 'a-f' || true)
+    case "$magic" in
+        *44454c4f)
+            flags=$(devmem 0x8FFF001C 32 2>/dev/null | tr 'A-F' 'a-f' || true)
+            case "$flags" in
+                *1|*3|*5|*7|*9|*b|*d|*f) rtos_gpio_owned=true ;;
+            esac
+            v=$(devmem 0x8FFF0010 32 2>/dev/null | tr 'A-F' 'a-f' || true)
+            case "$v" in
+                *00000001|*0x1) rtos_variant=pcie ;;
+                *00000002|*0x2) rtos_variant=cube-gpio ;;
+                *00000003|*0x3) rtos_variant=cube-i2c1 ;;
+            esac
             ;;
     esac
+fi
+
+case "$rtos_variant" in
+    pcie)
+        variant=pcie
+        revision=pcie
+        oled=true
+        rtos_gpio_owned=true
+        ;;
+    cube-gpio)
+        variant=cube
+        revision=beta
+        oled=true
+        rtos_gpio_owned=true
+        ;;
+    cube-i2c1)
+        variant=cube
+        revision=alpha
+        oled=true
+        ;;
+esac
+
+if [ "$oled" = true ] && [ -n "$rtos_variant" ]; then
+    printf 'NanoKVM: C906L owns OLED (%s), skip I2C/GPIO reset\n' "$rtos_variant"
+    printf '%s\n' "$rtos_variant" >"$runtime_dir/oled-rtos"
+    chmod 0644 "$runtime_dir/oled-rtos"
+fi
+# Do not sysfs-unbind i2c-gpio: releasing that driver can stall.
+# Hide the adapter from the OLED extension so it cannot send 0xAE.
+if [ "$rtos_gpio_owned" = true ] && [ -e /dev/i2c-5 ]; then
+    chmod 000 /dev/i2c-5 2>/dev/null || true
 fi
 
 if [ "$oled" != true ]; then

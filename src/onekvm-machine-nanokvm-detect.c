@@ -33,5 +33,5 @@ int main(int argc, char **argv) {
     const unsigned char contrast[] = {0x00, 0x81, 0xcf};
     ssize_t written = write(fd, contrast, sizeof(contrast));
     close(fd);
-    return written == (ssize_t)sizeof(display_off) ? 0 : 1;
+    return written == (ssize_t)sizeof(contrast) ? 0 : 1;
 }
