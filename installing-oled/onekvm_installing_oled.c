@@ -746,16 +746,27 @@ static int __init onekvm_installing_oled_init(void)
 	size_t profile_count;
 	int attempt;
 	int ret;
+	u32 rtos_cmd;
 
-	if (!strcmp(display_mode, "install") &&
-	    !onekvm_rtos_post(ONEKVM_OLED_CMD_INSTALL)) {
-		pr_info("onekvm-installing-oled: posted install canvas to C906L\n");
-		return 0;
-	}
-	if (!strcmp(display_mode, "recovery") &&
-	    !onekvm_rtos_post(ONEKVM_OLED_CMD_RECOVERY)) {
-		pr_info("onekvm-installing-oled: posted recovery canvas to C906L\n");
-		return 0;
+	if (!strcmp(display_mode, "install"))
+		rtos_cmd = ONEKVM_OLED_CMD_INSTALL;
+	else if (!strcmp(display_mode, "recovery"))
+		rtos_cmd = ONEKVM_OLED_CMD_RECOVERY;
+	else
+		rtos_cmd = 0;
+
+	if (rtos_cmd) {
+		ret = onekvm_rtos_post(rtos_cmd);
+		if (!ret) {
+			pr_info("onekvm-installing-oled: posted %s canvas to C906L\n",
+				display_mode);
+			return 0;
+		}
+		if (ret != -ENODEV) {
+			pr_err("onekvm-installing-oled: C906L post failed: %d\n",
+			       ret);
+			return ret;
+		}
 	}
 
 	if (!strcmp(display_mode, "install")) {
