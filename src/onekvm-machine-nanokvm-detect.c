@@ -28,11 +28,10 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* SSD1306/SH1106 command 0xae is display-off. Besides being a safe ACK
-       probe, this guarantees that boot-time detection never leaves stale
-       pixels lit before the OLED extension applies the user's layout. */
-    const unsigned char display_off[] = {0x00, 0xae};
-    ssize_t written = write(fd, display_off, sizeof(display_off));
+    /* Do not send 0xAE. C906L already owns the panel; turning it off here
+       blanks the BOOTING canvas. Contrast is a harmless ACK probe. */
+    const unsigned char contrast[] = {0x00, 0x81, 0xcf};
+    ssize_t written = write(fd, contrast, sizeof(contrast));
     close(fd);
     return written == (ssize_t)sizeof(display_off) ? 0 : 1;
 }

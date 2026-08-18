@@ -703,6 +703,34 @@ fail:
 	return ret;
 }
 
+#define ONEKVM_OLED_SHM_PHYS  0x8FFF0000UL
+#define ONEKVM_OLED_SHM_MAGIC 0x44454C4FU
+#define ONEKVM_OLED_CMD_INSTALL  3
+#define ONEKVM_OLED_CMD_RECOVERY 4
+
+static int onekvm_rtos_post(u32 cmd)
+{
+	void __iomem *map;
+	u32 magic;
+	u32 seq;
+
+	map = ioremap(ONEKVM_OLED_SHM_PHYS, 0x1000);
+	if (!map)
+		return -ENOMEM;
+	magic = readl(map);
+	if (magic != ONEKVM_OLED_SHM_MAGIC) {
+		iounmap(map);
+		return -ENODEV;
+	}
+	writel(cmd, map + 12);
+	seq = readl(map + 4) + 1;
+	if (!seq)
+		seq = 1;
+	writel(seq, map + 4);
+	iounmap(map);
+	return 0;
+}
+
 static int __init onekvm_installing_oled_init(void)
 {
 	static const struct onekvm_oled_profile * const profiles[] = {
@@ -718,6 +746,17 @@ static int __init onekvm_installing_oled_init(void)
 	size_t profile_count;
 	int attempt;
 	int ret;
+
+	if (!strcmp(display_mode, "install") &&
+	    !onekvm_rtos_post(ONEKVM_OLED_CMD_INSTALL)) {
+		pr_info("onekvm-installing-oled: posted install canvas to C906L\n");
+		return 0;
+	}
+	if (!strcmp(display_mode, "recovery") &&
+	    !onekvm_rtos_post(ONEKVM_OLED_CMD_RECOVERY)) {
+		pr_info("onekvm-installing-oled: posted recovery canvas to C906L\n");
+		return 0;
+	}
 
 	if (!strcmp(display_mode, "install")) {
 		recovery_mode = false;

@@ -87,6 +87,28 @@ revision=unknown
 oled=false
 wifi=false
 
+if [ -r /sys/class/misc/onekvm-oled/variant ]; then
+    rtos_variant=$(cat /sys/class/misc/onekvm-oled/variant)
+    case "$rtos_variant" in
+        pcie)
+            variant=pcie
+            revision=pcie
+            oled=true
+            ;;
+        cube-gpio)
+            variant=cube
+            revision=beta
+            oled=true
+            ;;
+        cube-i2c1)
+            variant=cube
+            revision=alpha
+            oled=true
+            ;;
+    esac
+fi
+
+if [ "$oled" != true ]; then
 # Alpha Cube routes its OLED over the SoC I2C1 controller. These pads overlap
 # the later boards' SDIO bus, so test Alpha first and restore SDIO on failure.
 devmem 0x030010D0 32 0x2 >/dev/null
@@ -120,10 +142,11 @@ else
         revision=beta
         oled=true
     fi
+fi
+fi
 
-    if detect_wifi; then
-        wifi=true
-    fi
+if [ "$revision" != "alpha" ] && detect_wifi; then
+    wifi=true
 fi
 
 temporary=${hardware_file}.tmp.$$
