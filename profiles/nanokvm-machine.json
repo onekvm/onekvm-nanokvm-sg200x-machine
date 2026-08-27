@@ -4,11 +4,9 @@
   "storage": "mmc0",
   "extension_memory_budget": "64M",
   "capabilities": {
-    "audio": false
+    "audio": true
   },
   "fixed": {
-    "video.source_device": "/dev/video0",
-    "audio.enabled": "false",
-    "audio.device": ""
+    "video.source_device": "/dev/video0"
   }
 }
