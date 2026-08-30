@@ -21,6 +21,7 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/string.h>
+#include <linux/version.h>
 #include <linux/workqueue.h>
 
 #define ONEKVM_PINMUX_BASE          0x03001000
@@ -643,6 +644,9 @@ static void restore_hardware_state(void)
 static int prepare_hardware(void)
 {
 	struct gpio_chip *chip;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
+	struct gpio_device *gdev;
+#endif
 	u32 value;
 	int ret;
 
@@ -653,8 +657,17 @@ static int prepare_hardware(void)
 	saved_pinmux_enable = readl(onekvm_pinmux + ONEKVM_PINMUX_ENABLE);
 	saved_pinmux_sda = readl(onekvm_pinmux + ONEKVM_PINMUX_SDA);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
+	gdev = gpio_device_find_by_label(ONEKVM_GPIO_CHIP_LABEL);
+	chip = gdev ? gpio_device_get_chip(gdev) : NULL;
+#else
 	chip = gpiochip_find(ONEKVM_GPIO_CHIP_LABEL, match_gpiochip_label);
+#endif
 	if (!chip) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
+		if (gdev)
+			gpio_device_put(gdev);
+#endif
 		iounmap(onekvm_pinmux);
 		onekvm_pinmux = NULL;
 		return -EPROBE_DEFER;
@@ -672,6 +685,10 @@ static int prepare_hardware(void)
 	if (ret)
 		goto fail;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
+	gpio_device_put(gdev);
+	gdev = NULL;
+#endif
 	value = (saved_pinmux_scl & ~0x7U) | ONEKVM_PINMUX_GPIO;
 	writel(value, onekvm_pinmux + ONEKVM_PINMUX_SCL);
 	value = (saved_pinmux_enable & ~0x7U) | ONEKVM_PINMUX_GPIO;
@@ -697,6 +714,10 @@ static int prepare_hardware(void)
 	return 0;
 
 fail:
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
+	if (gdev)
+		gpio_device_put(gdev);
+#endif
 	restore_hardware_state();
 	iounmap(onekvm_pinmux);
 	onekvm_pinmux = NULL;
