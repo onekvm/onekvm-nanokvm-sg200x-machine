@@ -35,9 +35,11 @@ else
     grep -q " / squashfs ro[, ]" /proc/mounts
 fi
 
+# onekvm.service Type=notify already waited for Core. Do not launch
+# onekvm-cli (a cold Go binary) in a loop on the single-core boot path.
 attempt=0
-while [ "$attempt" -lt 300 ]; do
-    if onekvm-cli show system status >/dev/null 2>&1; then
+while [ "$attempt" -lt 50 ]; do
+    if systemctl is-active --quiet onekvm.service; then
         rauc status mark-good
 
         cache_dir=/run/onekvm
@@ -59,5 +61,5 @@ while [ "$attempt" -lt 300 ]; do
     sleep 0.1
 done
 
-echo "OneKVM D-Bus health check timed out" >&2
+echo "OneKVM service was not active for slot health" >&2
 exit 1

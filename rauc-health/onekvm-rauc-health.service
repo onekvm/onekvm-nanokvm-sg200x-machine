@@ -5,6 +5,7 @@ ConditionKernelCommandLine=|rauc.slot=B
 ConditionKernelCommandLine=!onekvm.recovery
 ConditionKernelCommandLine=!onekvm.nfsroot=1
 After=onekvm.service
+Wants=onekvm.service
 OnFailure=onekvm-rauc-failure.service
 
 [Service]
@@ -14,4 +15,4 @@ RemainAfterExit=yes
 TimeoutStartSec=45s
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=onekvm.service

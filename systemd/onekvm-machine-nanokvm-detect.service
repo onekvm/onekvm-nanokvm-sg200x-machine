@@ -1,9 +1,10 @@
 [Unit]
 Description=Detect NanoKVM board variant and optional hardware
+DefaultDependencies=no
 After=systemd-modules-load.service
-Before=onekvm.service
+Before=onekvm-pre.target onekvm.service onekvm-device-gpio-atx.service shutdown.target
+Conflicts=shutdown.target
 ConditionPathExists=/usr/share/onekvm/machine.json
-ConditionPathExists=/sys/class/gpio/export
 
 [Service]
 Type=oneshot
@@ -11,4 +12,4 @@ ExecStart=/usr/libexec/onekvm/onekvm-machine-nanokvm-detect
 RemainAfterExit=yes
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=onekvm-pre.target
