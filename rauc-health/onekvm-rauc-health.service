@@ -4,7 +4,7 @@ ConditionKernelCommandLine=|rauc.slot=A
 ConditionKernelCommandLine=|rauc.slot=B
 ConditionKernelCommandLine=!onekvm.recovery
 ConditionKernelCommandLine=!onekvm.nfsroot=1
-After=onekvm.service onekvm-device-nanokvm-mmf-modules.service
+After=onekvm.service onekvm-video-soph-mmf-modules.service
 Wants=onekvm.service
 OnFailure=onekvm-rauc-failure.service
 

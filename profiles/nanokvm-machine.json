@@ -1,10 +1,15 @@
 {
   "machine": "nanokvm",
+  "vendor": "Sipeed",
+  "name": "NanoKVM",
   "led": "led-user",
   "storage": "mmc0",
   "extension_memory_budget": "64M",
   "capabilities": {
     "audio": true
+  },
+  "defaults": {
+    "network.hostname": "onekvm-nanokvm"
   },
   "fixed": {
     "video.source_device": "/dev/video0"

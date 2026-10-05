@@ -198,17 +198,17 @@ nanokvm_write_root_slots() {
 
 nanokvm_make_userdata() {
     msg "OneKVM: creating NanoKVM userdata filesystem"
-    mkfs.ext4 -F -L userdata \
+    # New layouts use f2fs. An existing ext4 or f2fs filesystem is left
+    # untouched by the caller; this path only runs when the partition is empty.
+    mkfs.f2fs -f -l userdata \
         -U 4f4b564d-0000-4000-8000-000000000004 \
-        -m 0 -J size=16 \
-        -O ^orphan_file,^metadata_csum_seed \
-        -E lazy_itable_init=1,lazy_journal_init=1 "$userdata" >/dev/null ||
+        "$userdata" >/dev/null ||
         nanokvm_die "could not create the userdata filesystem"
 
     verify_mount="$migration_dir/verify-userdata"
     mkdir -p "$verify_mount"
-    mount -t ext4 -o rw "$userdata" "$verify_mount" ||
-        nanokvm_die "userdata is not a mountable ext4 filesystem"
+    mount -t f2fs -o rw "$userdata" "$verify_mount" ||
+        nanokvm_die "userdata is not a mountable f2fs filesystem"
     sync
     umount "$verify_mount" ||
         nanokvm_die "could not unmount verified userdata"
@@ -284,7 +284,7 @@ nanokvm_run() {
         nanokvm_partition_matches 4 "$userdata_start" "$userdata_size" ||
             nanokvm_die "unknown userdata geometry; refusing migration"
         userdata_type=$(nanokvm_filesystem_type "$userdata")
-        if [ "$userdata_type" = ext4 ]; then
+        if [ "$userdata_type" = ext4 ] || [ "$userdata_type" = f2fs ]; then
             root_b_type=$(nanokvm_filesystem_type "$root_b")
             if [ "$root_b_type" = squashfs ]; then
                 info "OneKVM: NanoKVM A/B storage layout is complete"

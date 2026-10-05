@@ -25,10 +25,9 @@ fi
 
 data_type=$(blkid -p -s TYPE -o value "$data" 2>/dev/null || true)
 if [ -z "$data_type" ]; then
-    mkfs.ext4 -F -L userdata -U 4f4b564d-0000-4000-8000-000000000004 \
-        -m 0 -J size=16 \
-        -O ^orphan_file,^metadata_csum_seed \
-        -E lazy_itable_init=1,lazy_journal_init=1 "$data"
+    # Do not reformat an existing ext4 or f2fs filesystem. Only an empty
+    # partition (no blkid type) is created, and new filesystems are f2fs.
+    mkfs.f2fs -f -l userdata -U 4f4b564d-0000-4000-8000-000000000004 "$data"
 fi
 
 if "$created" && [ "${ONEKVM_STORAGE_NO_REBOOT:-0}" != 1 ]; then
