@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+. /usr/lib/onekvm/storage-layout.sh
+onekvm_storage_links
+
+# A manually created /dev alias is not a udev DEVLINK and cannot satisfy a
+# systemd .device dependency from fstab. Mount the resolved real device here.
+case "$storage_media" in
+    pro-*)
+        mkdir -p /boot
+        # FAT ignores permission changes on remount. Restrict its first mount
+        # so future SD KASLR seeds are never readable by unprivileged users.
+        mountpoint -q /boot || mount -t vfat -o noatime,fmask=0177,dmask=0077 "$loader" /boot
+        ;;
+esac

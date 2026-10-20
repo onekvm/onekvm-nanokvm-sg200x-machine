@@ -1,14 +1,52 @@
 #!/bin/sh
 
-# NanoKVM first-boot A/B storage migration. This module is intentionally
-# installed only in the NanoKVM initramfs.
+# Shared NanoKVM / Pro first-boot A/B storage initialization.
 
 nanokvm_enabled() {
     return 0
 }
 
 nanokvm_die() {
+    nanokvm_splash error
     fatal "OneKVM NanoKVM storage migration: $1"
+}
+
+nanokvm_splash() {
+    command -v onekvm-boot-splash >/dev/null 2>&1 || return 0
+    onekvm-boot-splash --language "${splash_language:-en}" "$@" 2>/dev/null || true
+}
+
+nanokvm_read_splash_language() {
+    # firstboot.txt contains credentials and CLI statements, never shell code.
+    # Read only the installer's canonical language statement, without eval/source.
+    splash_language=en
+    language_mount=$migration_dir/language
+    mkdir -p "$language_mount" || return 0
+    if mount -t vfat -o ro,nodev,nosuid,noexec "$loader" "$language_mount"; then
+        if [ -f "$language_mount/firstboot.txt" ]; then
+            splash_language=$(awk '
+                $1 == "set" && $2 == "system" && $3 == "language" && NF == 4 {
+                    if ($4 == "en" || $4 == "zh" || $4 == "zh_tw") value=$4
+                }
+                END { print value == "" ? "en" : value }
+            ' "$language_mount/firstboot.txt")
+        fi
+        umount "$language_mount" || nanokvm_die "cannot release language inspection mount"
+    fi
+    rmdir "$language_mount" 2>/dev/null || true
+    nanokvm_splash boot
+}
+
+nanokvm_start_splash() {
+    # The Pro Desk panel must be ready before installing or expanding /boot.
+    # Other boards have no splash binary or no matching framebuffer. Loading
+    # and drawing are best effort and must never hold up storage recovery.
+    command -v onekvm-boot-splash >/dev/null 2>&1 || return 0
+    if [ ! -e /dev/fb0 ]; then
+        insmod /usr/lib/onekvm-initramfs/fbtft.ko 2>/dev/null || true
+        insmod /usr/lib/onekvm-initramfs/fb_jd9853.ko 2>/dev/null || true
+    fi
+    nanokvm_splash boot
 }
 
 nanokvm_wait_for_block() {
@@ -60,6 +98,7 @@ nanokvm_filesystem_type() {
 
 nanokvm_start_oled() {
     oled_loaded=false
+    [ "$storage_media" = nanokvm ] || return 0
     if insmod /usr/lib/onekvm-initramfs/onekvm-installing-oled.ko mode=install 2>/dev/null; then
         oled_loaded=true
         msg "OneKVM: Install OS OLED canvas enabled (3 second blink)"
@@ -118,6 +157,12 @@ nanokvm_copy_root_to_ram() {
     [ "$mem_available_kib" -ge "$required_mem_kib" ] ||
         nanokvm_die "not enough RAM is available for the protected rootfs copy"
 
+    # /run defaults to half of RAM. The combined boot/root backup can be
+    # larger, so give it a separate tmpfs bounded by available RAM minus the
+    # same reserve. No file contents are allocated until the copies below.
+    migration_ram_kib=$((mem_available_kib - 16384))
+    mount -t tmpfs -o "mode=0700,size=${migration_ram_kib}k" tmpfs "$migration_dir" ||
+        nanokvm_die "cannot prepare protected migration RAM"
     msg "OneKVM: copying NanoKVM rootfs A into RAM"
     dd if="$root_a" of="$root_image" bs=1048576 count="$root_copy_blocks" ||
         nanokvm_die "could not copy rootfs A into RAM"
@@ -136,6 +181,67 @@ nanokvm_verify_squashfs() {
     umount "$verify_mount" ||
         nanokvm_die "could not unmount verified rootfs $name"
     rmdir "$verify_mount"
+}
+
+nanokvm_inspect_carrier() {
+    grow_boot=false
+    source_loader_size=$loader_size
+    source_root_start=$root_a_start
+    onekvm_storage_carrier_geometry || return 0
+    boot_mount=$migration_dir/boot-mount
+    boot_backup=$migration_dir/boot-files
+    mkdir -p "$boot_mount" || nanokvm_die "cannot create boot inspection directory"
+    mount -t vfat -o ro,nodev,nosuid,noexec "$loader" "$boot_mount" ||
+        nanokvm_die "cannot inspect carrier boot filesystem"
+    if [ -f "$boot_mount/bootgrow" ]; then
+        [ "$(cat "$boot_mount/bootgrow")" = 128 ] || nanokvm_die "unsupported installed boot size"
+        expected_id=0x4f4b564d
+        [ "$storage_media" = nanokvm ] || expected_id=0x4f4b5650
+        [ "$(sfdisk --disk-id "$disk")" = "$expected_id" ] || nanokvm_die "unexpected carrier disk identifier"
+        grow_boot=true
+        source_loader_size=$carrier_boot_size
+        source_root_start=$carrier_root_start
+        loader_size=262144
+        root_a_start=264192
+        root_b_start=$((root_a_start + root_slot_size + root_b_gap))
+        userdata_start=$((root_b_start + root_slot_size))
+    fi
+    umount "$boot_mount" || nanokvm_die "cannot release carrier boot filesystem"
+}
+
+nanokvm_copy_boot_to_ram() {
+    [ "$grow_boot" = true ] || return 0
+    mkdir -p "$boot_mount" || nanokvm_die "cannot create boot copy mountpoint"
+    mount -t vfat -o ro,nodev,nosuid,noexec "$loader" "$boot_mount" ||
+        nanokvm_die "cannot read carrier boot files"
+    set -- $(du -sk "$boot_mount")
+    boot_kib=$1
+    mem_available_kib=$(sed -n 's/^MemAvailable:[[:space:]]*\([0-9]*\).*/\1/p' /proc/meminfo)
+    [ "$mem_available_kib" -ge "$((boot_kib + 16384))" ] ||
+        nanokvm_die "not enough RAM for the protected boot file copy"
+    msg "OneKVM: preserving boot files and firstboot configuration in RAM"
+    (cd "$boot_mount" && find . -type f -exec sha256sum '{}' ';') >"$migration_dir/boot.sha256" ||
+        nanokvm_die "cannot checksum carrier boot files"
+    mkdir -p "$boot_backup" && cp -R "$boot_mount/." "$boot_backup/" ||
+        nanokvm_die "cannot copy carrier boot files to RAM"
+    (cd "$boot_backup" && sha256sum -c "$migration_dir/boot.sha256") ||
+        nanokvm_die "boot RAM copy verification failed"
+    umount "$boot_mount" || nanokvm_die "cannot release carrier boot filesystem"
+}
+
+nanokvm_restore_boot() {
+    [ "$grow_boot" = true ] || return 0
+    msg "OneKVM: creating installed 128 MiB boot filesystem"
+    mkfs.vfat -F 16 -n ONEKVMBOOT "$loader" || nanokvm_die "cannot format installed boot filesystem"
+    mount -t vfat -o rw,nodev,nosuid,noexec "$loader" "$boot_mount" ||
+        nanokvm_die "cannot mount installed boot filesystem"
+    cp -R "$boot_backup/." "$boot_mount/" || nanokvm_die "cannot restore boot files"
+    sync
+    (cd "$boot_mount" && sha256sum -c "$migration_dir/boot.sha256") ||
+        nanokvm_die "installed boot file verification failed"
+    rm -f "$boot_mount/bootgrow" || nanokvm_die "cannot complete boot expansion"
+    sync
+    umount "$boot_mount" || nanokvm_die "cannot release installed boot filesystem"
 }
 
 nanokvm_refresh_partitions() {
@@ -162,7 +268,7 @@ label: dos
 label-id: $disk_id
 unit: sectors
 
-start=$loader_start, size=$loader_size, type=c, bootable
+start=$loader_start, size=$loader_size, type=$loader_type, bootable
 start=$root_a_start, size=$root_slot_size, type=83
 start=$root_b_start, size=$root_slot_size, type=83
 start=$userdata_start, size=$userdata_size, type=83
@@ -187,8 +293,8 @@ nanokvm_write_root_slots() {
     sync
     nanokvm_verify_squashfs "$root_b" B
 
-    # A stays at the same sectors throughout the table rewrite. Restore it
-    # last from the protected copy so both slots are byte-identical.
+    # The compact carrier's A moves after the larger installed boot partition.
+    # Restore both slots from the protected copy.
     msg "OneKVM: restoring NanoKVM rootfs A"
     dd if="$root_image" of="$root_a" bs=1048576 count="$root_copy_blocks" ||
         nanokvm_die "could not restore rootfs A"
@@ -201,7 +307,7 @@ nanokvm_make_userdata() {
     # New layouts use f2fs. An existing ext4 or f2fs filesystem is left
     # untouched by the caller; this path only runs when the partition is empty.
     mkfs.f2fs -f -l userdata \
-        -U 4f4b564d-0000-4000-8000-000000000004 \
+        -U "$userdata_uuid" \
         "$userdata" >/dev/null ||
         nanokvm_die "could not create the userdata filesystem"
 
@@ -215,24 +321,55 @@ nanokvm_make_userdata() {
     rmdir "$verify_mount"
 }
 
-nanokvm_run() {
-    disk=${ONEKVM_NANOKVM_FIRSTBOOT_DISK:-/dev/mmcblk0}
-    disk_name=${disk##*/}
-    case "$disk" in
-        *[0-9]) partition_prefix=${disk}p ;;
-        *) partition_prefix=$disk ;;
+nanokvm_extend_userdata() {
+    [ "$existing_userdata_size" -lt "$userdata_size" ] || return 0
+    [ "$storage_media" != pro-emmc ] || nanokvm_die "eMMC userdata geometry is incomplete"
+    printf 'start=%s, size=%s, type=83\n' "$userdata_start" "$userdata_size" |
+        sfdisk --no-reread --force -N 4 "$disk" || nanokvm_die "cannot grow userdata partition"
+    nanokvm_refresh_partitions
+    case "$userdata_type" in
+        ext4)
+            check=0; e2fsck -pf "$userdata" || check=$?
+            [ "$check" -le 1 ] || nanokvm_die "userdata filesystem check failed"
+            resize2fs -f "$userdata" || nanokvm_die "cannot grow ext4 userdata" ;;
+        f2fs) resize.f2fs "$userdata" || nanokvm_die "cannot grow f2fs userdata" ;;
     esac
-    loader=${partition_prefix}1
-    root_a=${partition_prefix}2
-    root_b=${partition_prefix}3
-    userdata=${partition_prefix}4
-    loader_start=1
-    loader_size=65536
-    root_a_start=67584
-    root_slot_size=262144
-    root_slot_bytes=134217728
-    root_b_start=331776
-    userdata_start=593920
+}
+
+nanokvm_migrate_overlay() {
+    [ "$storage_media" != nanokvm ] || return 0
+    legacy_mount=/run/onekvm-legacy-data
+    mkdir -p "$legacy_mount"
+    mount -t "$userdata_type" -o rw "$userdata" "$legacy_mount" || nanokvm_die "cannot inspect userdata"
+    # Only the previous Pro experimental layout has slots/*/upper and
+    # shared-data. Renames make this conversion safe to repeat after power loss.
+    legacy_slot=$storage_slot
+    if [ -f "$legacy_mount/storage/.legacy-active-slot" ]; then
+        read -r legacy_slot <"$legacy_mount/storage/.legacy-active-slot"
+        case "$legacy_slot" in A|B) ;; *) nanokvm_die "invalid legacy slot marker" ;; esac
+    fi
+    if [ ! -d "$legacy_mount/upper" ] && [ -d "$legacy_mount/slots/$legacy_slot/upper" ]; then
+        mv "$legacy_mount/slots/$legacy_slot/upper" "$legacy_mount/upper" || nanokvm_die "cannot migrate upper"
+    fi
+    if [ -d "$legacy_mount/shared-data" ]; then
+        mkdir -p "$legacy_mount/upper"
+        if [ -d "$legacy_mount/upper/data" ]; then
+            rmdir "$legacy_mount/upper/data" || nanokvm_die "unexpected data in legacy upper"
+        fi
+        mv "$legacy_mount/shared-data" "$legacy_mount/upper/data" || nanokvm_die "cannot migrate shared data"
+    fi
+    rm -f "$legacy_mount/storage/.legacy-active-slot"
+    sync
+    umount "$legacy_mount" || nanokvm_die "cannot release userdata"
+    rmdir "$legacy_mount"
+}
+
+nanokvm_run() {
+    nanokvm_start_splash
+    . /usr/lib/onekvm/storage-layout.sh
+    onekvm_storage_select || nanokvm_die "cannot identify boot medium"
+    loader_type=c
+    [ "$storage_media" = nanokvm ] || loader_type=e
     migration_dir=/run/onekvm-firstboot
     root_image=$migration_dir/rootfs-a.squashfs
     oled_loaded=false
@@ -240,9 +377,18 @@ nanokvm_run() {
     nanokvm_wait_for_block "$disk" || nanokvm_die "SD card was not found"
     nanokvm_wait_for_block "$loader" ||
         nanokvm_die "loader partition was not found"
+    nanokvm_read_splash_language
     nanokvm_wait_for_block "$root_a" ||
         nanokvm_die "rootfs A partition was not found"
 
+    storage_kind=$(cat "/sys/class/block/$disk_name/device/type") ||
+        nanokvm_die "cannot identify storage hardware"
+    case "$storage_media:$storage_kind" in
+        nanokvm:SD|pro-sd:SD|pro-emmc:MMC) ;;
+        *) nanokvm_die "boot parameters disagree with storage hardware" ;;
+    esac
+
+    nanokvm_inspect_carrier
     read -r disk_size <"/sys/class/block/$disk_name/size"
     userdata_size=$((disk_size - userdata_start))
     [ "$userdata_size" -ge 65536 ] ||
@@ -252,13 +398,10 @@ nanokvm_run() {
     # the expected rootfs start sector, and a positively identified SquashFS.
     # The downloadable image deliberately sizes its sole rootfs partition to
     # the SquashFS file; only the installed A/B layout uses 128 MiB slots.
-    nanokvm_partition_matches 1 "$loader_start" "$loader_size" ||
+    nanokvm_partition_matches 1 "$loader_start" "$source_loader_size" ||
         nanokvm_die "unknown loader partition geometry; refusing migration"
-    nanokvm_partition_starts_at 2 "$root_a_start" ||
+    nanokvm_partition_starts_at 2 "$source_root_start" ||
         nanokvm_die "unknown rootfs A start sector; refusing migration"
-    root_a_type=$(nanokvm_filesystem_type "$root_a")
-    [ "$root_a_type" = squashfs ] ||
-        nanokvm_die "rootfs A is not SquashFS; refusing migration"
 
     p3_present=false
     p4_present=false
@@ -281,43 +424,71 @@ nanokvm_run() {
     if [ "$p4_present" = true ]; then
         [ "$p3_present" = true ] ||
             nanokvm_die "userdata exists without rootfs B; refusing migration"
-        nanokvm_partition_matches 4 "$userdata_start" "$userdata_size" ||
-            nanokvm_die "unknown userdata geometry; refusing migration"
+        nanokvm_partition_starts_at 4 "$userdata_start" ||
+            nanokvm_die "unknown userdata start; refusing migration"
+        existing_userdata_size=$(nanokvm_partition_size 4)
+        [ "$existing_userdata_size" -ge 65536 ] && [ "$existing_userdata_size" -le "$userdata_size" ] ||
+            nanokvm_die "unknown userdata size; refusing migration"
         userdata_type=$(nanokvm_filesystem_type "$userdata")
         if [ "$userdata_type" = ext4 ] || [ "$userdata_type" = f2fs ]; then
-            root_b_type=$(nanokvm_filesystem_type "$root_b")
-            if [ "$root_b_type" = squashfs ]; then
-                info "OneKVM: NanoKVM A/B storage layout is complete"
-                return 0
-            fi
-
-            # Preserve an already initialized userdata filesystem. Only the
-            # inactive B slot needs repair in this state.
-            nanokvm_start_oled
-            nanokvm_copy_root_to_ram
-            msg "OneKVM: repairing NanoKVM rootfs B"
-            dd if="$root_image" of="$root_b" bs=1048576 count="$root_copy_blocks" ||
-                nanokvm_die "could not repair rootfs B"
-            sync
-            nanokvm_verify_squashfs "$root_b" B
-            nanokvm_stop_oled
-            rm -f "$root_image"
-            rmdir "$migration_dir" 2>/dev/null || true
-            msg "OneKVM: NanoKVM rootfs B repair complete"
+            # An initialized layout must reach Recovery even when a root
+            # slot is damaged. Repair is performed by the signed installer.
+            nanokvm_extend_userdata
+            nanokvm_migrate_overlay
+            info "OneKVM: A/B storage layout is complete"
             return 0
         fi
         [ -z "$userdata_type" ] ||
             nanokvm_die "userdata contains $userdata_type; refusing destructive migration"
     fi
 
+    root_a_type=$(nanokvm_filesystem_type "$root_a")
+    [ "$root_a_type" = squashfs ] || nanokvm_die "rootfs A is not SquashFS; refusing initialization"
+    if [ "$storage_media" = pro-emmc ]; then
+        # Linux cmdline partitions preserve the entire vendor boot prefix.
+        # Never write an MBR or a partition table to this medium.
+        onekvm_storage_validate || nanokvm_die "invalid eMMC cmdline partitions"
+        [ "$storage_slot" = A ] || nanokvm_die "initialize eMMC from slot A"
+        nanokvm_splash install 1
+        nanokvm_copy_root_to_ram
+        nanokvm_splash install 5
+        dd if="$root_image" of="$root_b" bs=1048576 count="$root_copy_blocks" || nanokvm_die "cannot initialize eMMC rootfs B"
+        sync
+        nanokvm_verify_squashfs "$root_b" B
+        nanokvm_splash install 6
+        nanokvm_make_userdata
+        nanokvm_splash install 7
+        rm -f "$root_image"
+        umount "$migration_dir" || nanokvm_die "cannot release migration RAM"
+        rmdir "$migration_dir" 2>/dev/null || true
+        nanokvm_splash boot
+        return 0
+    fi
+    [ "$storage_slot" != B ] || nanokvm_die "cannot initialize storage from slot B"
     nanokvm_start_oled
+    nanokvm_splash install 1
     nanokvm_copy_root_to_ram
+    nanokvm_splash install 2
+    nanokvm_copy_boot_to_ram
+    nanokvm_splash install 3
     nanokvm_rebuild_partition_table
+    nanokvm_splash install 4
+    nanokvm_restore_boot
+    nanokvm_splash install 5
     nanokvm_write_root_slots
+    nanokvm_splash install 6
     nanokvm_make_userdata
+    nanokvm_splash install 7
     sync
     nanokvm_stop_oled
     rm -f "$root_image"
+    if [ "$grow_boot" = true ]; then
+        rm -rf "$boot_backup"
+        rm -f "$migration_dir/boot.sha256"
+        rmdir "$boot_mount"
+    fi
+    umount "$migration_dir" || nanokvm_die "cannot release migration RAM"
     rmdir "$migration_dir" 2>/dev/null || true
     msg "OneKVM: NanoKVM A/B storage migration complete"
+    nanokvm_splash boot
 }

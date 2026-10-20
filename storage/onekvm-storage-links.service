@@ -1,0 +1,15 @@
+[Unit]
+Description=Resolve OneKVM boot medium and A/B devices
+DefaultDependencies=no
+Before=local-fs-pre.target rauc.service
+After=systemd-udev-trigger.service
+Wants=local-fs-pre.target
+ConditionKernelCommandLine=!onekvm.nfsroot=1
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/onekvm-storage-links
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target
