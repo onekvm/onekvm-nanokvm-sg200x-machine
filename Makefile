@@ -1,9 +1,12 @@
 CC ?= cc
 CFLAGS ?= -O2
 
-.PHONY: all clean test-boot-splash
+.PHONY: all clean test-boot-splash test-capture-chip-init
 
 all: onekvm-machine-nanokvm-i2c-probe
+
+test-capture-chip-init:
+	sh tests/capture-chip-init-test.sh
 
 onekvm-machine-nanokvm-i2c-probe: src/onekvm-machine-nanokvm-detect.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $< -o $@

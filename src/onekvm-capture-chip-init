@@ -1,0 +1,9 @@
+#!/bin/sh
+# Run chip-specific initialization before the capture backend owns the bus.
+set -eu
+hooks=${ONEKVM_CAPTURE_CHIP_INIT_DIR:-/usr/libexec/onekvm/capture-chip-init.d}
+for hook in "$hooks"/*; do
+    [ -f "$hook" ] && [ -x "$hook" ] || continue
+    echo "Capture chip initialization: ${hook##*/}"
+    "$hook"
+done

@@ -1,0 +1,61 @@
+#!/bin/sh
+# Initialize the persistent Pro HDMI EDID once per OneKVM data installation.
+set -eu
+
+model_path=${ONEKVM_EDID_MODEL_PATH:-/proc/device-tree/model}
+device=${ONEKVM_EDID_DEVICE:-/proc/lt6911_info/edid}
+preset=${ONEKVM_EDID_PRESET:-/usr/share/onekvm/edid/presets/factory.edid.bin}
+state=${ONEKVM_EDID_STATE_DIR:-/var/lib/onekvm/edid}
+marker=$state/pro-default-initialized
+
+model=$(tr -d '\000' <"$model_path")
+case "$model" in
+    *NanoKVM*Pro*) ;;
+    *) echo "Pro EDID: another machine; skip"; exit 0 ;;
+esac
+[ ! -f "$marker" ] || exit 0
+[ -r "$device" ] && [ -w "$device" ] || {
+    echo "Pro EDID: bridge EDID interface unavailable" >&2
+    exit 1
+}
+[ "$(wc -c <"$preset")" -eq 256 ] || {
+    echo "Pro EDID: preset must contain 256 bytes" >&2
+    exit 1
+}
+
+mkdir -p "$state"
+work=$(mktemp -d "$state/.pro-default.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+cat "$device" >"$work/before.bin"
+[ "$(wc -c <"$work/before.bin")" -eq 256 ] || {
+    echo "Pro EDID: incomplete bridge read; left unchanged" >&2
+    exit 1
+}
+if ! cmp -s "$preset" "$work/before.bin"; then
+    # Preserve the original even if a write fails and initialization retries.
+    if [ ! -e "$state/before-pro-default.bin" ]; then
+        cp "$work/before.bin" "$work/backup.bin"
+        mv "$work/backup.bin" "$state/before-pro-default.bin"
+        sync
+    fi
+    # The driver validates both checksums, programs only the EDID region,
+    # verifies it and power-cycles the bridge. It requires one 256-byte write.
+    dd if="$preset" of="$device" bs=256 count=1
+    # The bridge has just restarted and the proc reader can still serve its
+    # previous 500 ms cache. Retry reads only; never reprogram on a stale read.
+    for attempt in 1 2 3 4 5; do
+        sleep 0.6
+        if cat "$device" >"$work/after.bin" &&
+            cmp -s "$preset" "$work/after.bin"; then
+            break
+        fi
+    done
+    cmp -s "$preset" "$work/after.bin" || {
+        echo "Pro EDID: readback verification failed" >&2
+        exit 1
+    }
+fi
+sha256sum "$preset" | cut -d ' ' -f 1 >"$work/initialized"
+mv "$work/initialized" "$marker"
+sync
+echo "Pro EDID: 1920x1080@60 default initialized"

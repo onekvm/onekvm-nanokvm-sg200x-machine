@@ -1,0 +1,15 @@
+[Unit]
+Description=Initialize OneKVM capture chip
+After=local-fs.target onekvm-persistence.service
+Before=onekvm-video-soph-mmf-modules.service onekvm.service
+
+[Service]
+Type=oneshot
+# Package installation may request a service restart during an active stream.
+# Defer chip access until Core next starts with the capture bus released.
+ExecCondition=/bin/sh -c '! systemctl is-active --quiet onekvm.service'
+ExecStart=/usr/libexec/onekvm/onekvm-capture-chip-init
+RemainAfterExit=yes
+
+[Install]
+WantedBy=onekvm.service
