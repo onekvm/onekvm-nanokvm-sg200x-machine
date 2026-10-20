@@ -4,9 +4,9 @@
  *
  * This bit-bangs three lines through gpiolib so the DesignWare GPIO driver's
  * output shadow remains coherent.  The initramfs does not have to load the
- * normal GPIO-I2C stack before storage migration.  Installation mode remains
- * PCIe-only; recovery mode probes the Cube OLED (0x3d) before the PCIe OLED
- * (0x3c) and selects the matching canvas and display geometry.
+ * normal GPIO-I2C stack before storage migration. A responsive C906L owns
+ * the display; otherwise probe the Cube OLED (0x3d) before the PCIe OLED
+ * (0x3c) and select the matching canvas and display geometry.
  */
 
 #include <linux/bitops.h>
@@ -732,6 +732,8 @@ fail:
 static int onekvm_rtos_post(u32 cmd)
 {
 	void __iomem *map;
+	unsigned long deadline;
+	u32 ack;
 	u32 magic;
 	u32 seq;
 
@@ -744,12 +746,31 @@ static int onekvm_rtos_post(u32 cmd)
 		return -ENODEV;
 	}
 	writel(cmd, map + 12);
+	ack = readl(map + 8);
 	seq = readl(map + 4) + 1;
 	if (!seq)
 		seq = 1;
+	if (seq == ack) {
+		++seq;
+		if (!seq)
+			seq = 1;
+	}
 	writel(seq, map + 4);
+	/* Warm resets can retain the magic from a previous OneKVM FIP even
+	 * when the factory FIP starts no C906L image. Require a fresh ACK
+	 * before treating shared memory as a live display service.
+	 */
+	deadline = jiffies + msecs_to_jiffies(1000);
+	do {
+		if (readl(map + 8) == seq) {
+			iounmap(map);
+			return 0;
+		}
+		usleep_range(1000, 2000);
+	} while (time_before(jiffies, deadline));
 	iounmap(map);
-	return 0;
+	pr_info("onekvm-installing-oled: C906L did not acknowledge; probing OLED hardware\n");
+	return -ENODEV;
 }
 
 static int __init onekvm_installing_oled_init(void)
