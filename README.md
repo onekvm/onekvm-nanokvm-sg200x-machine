@@ -84,7 +84,9 @@ bridge reset mechanisms. Cube has no controllable bridge reset line: its EDID
 API reports `REBOOT`, and firmware updates must remain pending until a machine
 restart and verification. Whether a warm reboot reloads the Cube MCU, or a
 power cycle is required, still needs a Cube firmware-update hardware test.
-The Pro/Cube firmware delta updaters are not implemented by the EDID hook.
+Cube firmware deltas are handled by `onekvm-capture-firmware`, using C and
+shell with a numbered chain of source/target program hashes. Unvalidated Cube
+timing candidates are not installed. Pro firmware deltas remain unimplemented.
 
 ## Early OLED
 

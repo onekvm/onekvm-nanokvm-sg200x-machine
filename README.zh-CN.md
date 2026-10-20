@@ -73,7 +73,9 @@ Pro 与 Cube/PCIe 共用采集芯片初始化服务。它在 MMF 模块和 Core 
 匹配时跳过写入。升级校验后，Pro 和 PCIe 使用各自的桥片复位机制。Cube 没有
 可控的桥片硬件复位线：EDID API 返回 `REBOOT`，固件升级也需标记为待整机重启，
 重启后再确认生效。普通重启能否重新加载 Cube MCU、是否必须断电重启，仍需
-Cube 固件升级实机验收。EDID hook 本身尚未实现 Pro/Cube 的固件差异升级。
+Cube 固件升级实机验收。Cube 的差异升级由独立的 `onekvm-capture-firmware`
+包提供；它使用 C 和 shell，按连续编号及源／目标程序哈希执行受审计增量。
+该包不附带未验收的 Cube 优化候选。Pro 固件差异升级仍未实现。
 
 ## 早期 OLED
 
