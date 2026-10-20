@@ -1,0 +1,20 @@
+[Unit]
+Description=Clear OneKVM boot attempts after two minutes of normal operation
+DefaultDependencies=no
+Requires=onekvm-rauc-health.service
+After=multi-user.target onekvm-rauc-health.service
+Before=shutdown.target
+Conflicts=shutdown.target
+ConditionPathIsMountPoint=/boot
+ConditionPathExists=/boot/boot_retry_time.txt
+ConditionKernelCommandLine=!onekvm.recovery
+ConditionKernelCommandLine=!onekvm_recovery
+ConditionKernelCommandLine=!onekvm.nfsroot=1
+
+[Timer]
+OnActiveSec=2min
+AccuracySec=1s
+Unit=onekvm-boot-success.service
+
+[Install]
+WantedBy=multi-user.target

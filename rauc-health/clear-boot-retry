@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+# The timer starts after slot validation and normal startup have completed.
+# Preserve the failed-boot evidence if OneKVM stopped during the grace period.
+boot=${ONEKVM_BOOT_DIR:-/boot}
+mountpoint -q "$boot"
+systemctl is-active --quiet onekvm.service
+systemctl is-active --quiet onekvm-rauc-health.service
+rm -f "$boot/boot_retry_time.txt"
+sync

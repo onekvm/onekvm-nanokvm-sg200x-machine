@@ -1,0 +1,11 @@
+[Unit]
+Description=Clear the successful OneKVM boot attempt counter
+Requires=onekvm-rauc-health.service
+After=onekvm-rauc-health.service
+RequiresMountsFor=/boot
+ConditionPathIsMountPoint=/boot
+ConditionPathExists=/boot/boot_retry_time.txt
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/onekvm/clear-boot-retry
