@@ -90,6 +90,11 @@ timing candidates are not installed. Pro firmware deltas remain unimplemented.
 
 ## Early OLED
 
+The earliest Alpha Cube routes GPIOA27 to both the ATX reset output and the
+OLED I2C1 SDA signal. The Alpha default therefore leaves reset unclaimed so
+the ATX provider cannot take the OLED bus; power, PWR LED, and HDD LED remain
+available.
+
 The initramfs installation and recovery displays prefer C906L and require a
 fresh sequence ACK within one second of posting a command. A warm reset can
 retain shared-memory magic from an earlier OneKVM boot even when the factory

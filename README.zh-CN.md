@@ -79,6 +79,10 @@ Cube 固件升级实机验收。Cube 的差异升级由独立的 `onekvm-capture
 
 ## 早期 OLED
 
+最早期的 Alpha Cube 将 GPIOA27 同时连接到 ATX 重置输出和 OLED 的 I2C1 SDA。
+Alpha 默认配置因此不申请重置线，以免 ATX 服务占用 SDA 导致 OLED 无法工作；
+电源键、PWR LED 和 HDD LED 仍可用。
+
 initramfs 的安装与恢复画面优先交给 C906L，发送命令后必须在 1 秒内收到新的序号 ACK。
 暖重启可能保留上次 OneKVM 的共享内存标记；原厂 FIP 未启动 C906L 时，该标记不能
 证明显示服务可用。没有有效标记或新 ACK 时，早期模块探测 Cube / PCIe OLED 并直接绘制。
