@@ -20,5 +20,7 @@
   "fixed": {
     "video.source_device": "/dev/video0"
   },
-  "memory_type": "DDR3"
+  "memory_type": "DDR3",
+  "processor": "T-Head C906",
+  "soc_name": "SG2002"
 }

@@ -184,10 +184,16 @@ if [ "$revision" != "alpha" ] && detect_wifi; then
     wifi=true
 fi
 
+case "$variant" in
+    pcie) variant_label=PCIe ;;
+    cube) variant_label=Cube ;;
+    *) variant_label=$variant ;;
+esac
+
 temporary=${hardware_file}.tmp.$$
 umask 022
-printf '{\n  "variant": "%s",\n  "revision": "%s",\n  "detected": {\n    "oled": %s,\n    "wifi": %s\n  }\n}\n' \
-    "$variant" "$revision" "$oled" "$wifi" >"$temporary"
+printf '{\n  "variant": "%s",\n  "variant_label": "%s",\n  "revision": "%s",\n  "detected": {\n    "oled": %s,\n    "wifi": %s\n  }\n}\n' \
+    "$variant" "$variant_label" "$revision" "$oled" "$wifi" >"$temporary"
 chmod 0644 "$temporary"
 mv -f "$temporary" "$hardware_file"
 
