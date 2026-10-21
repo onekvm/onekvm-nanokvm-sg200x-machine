@@ -4,14 +4,21 @@
   "name": "NanoKVM",
   "led": "led-user",
   "storage": "mmc0",
+  "update_repository": "onekvm/onekvm-release-nanokvm",
   "extension_memory_budget": "64M",
   "capabilities": {
-    "audio": true
+    "audio": true,
+    "recovery": true
   },
   "defaults": {
-    "network.hostname": "onekvm-nanokvm"
+    "network.hostname": "onekvm-nanokvm",
+    "video.fps": "60",
+    "audio.device": "hw:UAC1Gadget,0",
+    "usb.vendor_id": "0x3346",
+    "usb.product_id": "0x1009"
   },
   "fixed": {
     "video.source_device": "/dev/video0"
-  }
+  },
+  "memory_type": "DDR3"
 }
