@@ -29,7 +29,7 @@ module_build_id=$(cat "/lib/modules/$kernel_release/onekvm-build-id")
 
 mountpoint -q /boot
 if grep -q " / overlay rw[, ]" /proc/mounts; then
-    grep -q " /rofs squashfs ro[, ]" /proc/mounts
+    grep -Eq ' /(mnt/\.rofs|rofs) squashfs ro[, ]' /proc/mounts
 else
     mountpoint -q /data
     grep -q " / squashfs ro[, ]" /proc/mounts
