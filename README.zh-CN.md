@@ -79,9 +79,13 @@ Cube 固件升级实机验收。Cube 的差异升级由独立的 `onekvm-capture
 
 ## 早期 OLED
 
-最早期的 Alpha Cube 将 GPIOA27 同时连接到 ATX 重置输出和 OLED 的 I2C1 SDA。
-Alpha 默认配置因此不申请重置线，以免 ATX 服务占用 SDA 导致 OLED 无法工作；
-电源键、PWR LED 和 HDD LED 仍可用。
+最早期的 Alpha Cube 使用 GPIOA27 作为 ATX 重置输出，OLED 则使用 SD1 引脚上的
+硬件 I2C1。通用设备树还定义了 SDA 为 GPIOA27 的 GPIO-I2C OLED 总线；探测这条
+未使用的总线可能驱动 ATX 重置线。内核必须在 Alpha 探测前禁用该 GPIO-I2C 节点，
+并禁用与硬件 I2C1 引脚冲突的 Wi-Fi SDIO 节点。硬件 I2C1 控制器由 C906L 独占，
+Linux 不应绑定该控制器，并须保留共享 I2C 功能时钟引用；否则 Linux 可能关闭时钟，
+使开机动画冻结且 TX FIFO 留有未发送字节。PCIe 和后续 GPIO OLED 版本保持原有设备
+与时钟配置。Alpha ATX 配置提供电源键、重置键、PWR LED 和 HDD LED。
 
 initramfs 的安装与恢复画面优先交给 C906L，发送命令后必须在 1 秒内收到新的序号 ACK。
 暖重启可能保留上次 OneKVM 的共享内存标记；原厂 FIP 未启动 C906L 时，该标记不能

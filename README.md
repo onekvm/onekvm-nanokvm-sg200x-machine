@@ -90,10 +90,16 @@ timing candidates are not installed. Pro firmware deltas remain unimplemented.
 
 ## Early OLED
 
-The earliest Alpha Cube routes GPIOA27 to both the ATX reset output and the
-OLED I2C1 SDA signal. The Alpha default therefore leaves reset unclaimed so
-the ATX provider cannot take the OLED bus; power, PWR LED, and HDD LED remain
-available.
+The earliest Alpha Cube uses GPIOA27 for ATX reset. Its OLED uses hardware
+I2C1 on the SD1 pads. The common device tree also defines a GPIO-I2C OLED bus
+whose SDA is GPIOA27; probing that unused bus can drive the ATX reset line.
+The kernel must disable this GPIO-I2C node before probing on Alpha, along
+with the Wi-Fi SDIO node that overlaps its hardware I2C1 pads. C906L owns
+the hardware I2C1 controller, so Linux must also leave that controller
+unbound and retain its shared I2C functional clock. Otherwise Linux can
+gate the clock and freeze the boot animation with bytes left in the TX FIFO.
+PCIe and later GPIO OLED variants keep their normal device and clock setup.
+The Alpha ATX profile provides power, reset, PWR LED, and HDD LED.
 
 The initramfs installation and recovery displays prefer C906L and require a
 fresh sequence ACK within one second of posting a command. A warm reset can
