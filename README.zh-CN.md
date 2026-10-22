@@ -105,6 +105,9 @@ Cube/PCIe、Pro SD、Pro eMMC 共用。profile 定义几何，root 参数选择�
 已有 ext4/f2fs 保留。Cube/PCIe、Pro SD 与 Pro eMMC 安装后统一使用 128 MiB boot FAT；
 SD 发布载体的 FAT 按引导文件加少量余量生成，不填满最终分区容量。首启识别 `bootgrow`
 标记，将 rootfs 和全部引导文件（含 firstboot 配置）备份到 RAM 并校验，再建立最终分区；
+Cube/PCIe 载体另用内容为 `A` 的 `bootclone` 标记，只携带 `boot.sd`。首启在修改分区
+之前，于受保护的 RAM 备份中复制并校验独立的 `boot-b.itb`，保留相同的 A/B build ID；
+还原安装后的 FAT 并校验完成后删除两个安装标记。
 eMMC 仍从前置 raw A/B 区加载启动载荷。旧版 Cube 的 32 MiB loader 仍可作为升级目标。
 OE 配方仍在 `onekvm-distro`，Pro 启动限制见
 `onekvm-distro/docs/nanokvm-pro-ab-recovery.md`。

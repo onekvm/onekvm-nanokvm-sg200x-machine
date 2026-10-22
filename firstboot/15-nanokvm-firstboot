@@ -226,7 +226,34 @@ nanokvm_copy_boot_to_ram() {
         nanokvm_die "cannot copy carrier boot files to RAM"
     (cd "$boot_backup" && sha256sum -c "$migration_dir/boot.sha256") ||
         nanokvm_die "boot RAM copy verification failed"
+    nanokvm_expand_compact_nanokvm_boot
     umount "$boot_mount" || nanokvm_die "cannot release carrier boot filesystem"
+}
+
+nanokvm_expand_compact_nanokvm_boot() {
+    [ "$storage_media" = nanokvm ] && [ "$grow_boot" = true ] || return 0
+    if [ ! -e "$boot_backup/bootclone" ]; then
+        [ -s "$boot_backup/boot-b.itb" ] || nanokvm_die "carrier is missing boot-b.itb"
+        return 0
+    fi
+    [ "$(cat "$boot_backup/bootclone")" = A ] || nanokvm_die "unsupported boot clone source"
+    [ -s "$boot_backup/boot.sd" ] && [ -s "$boot_backup/build-id-a" ] &&
+        [ -s "$boot_backup/build-id-b" ] &&
+        cmp -s "$boot_backup/build-id-a" "$boot_backup/build-id-b" ||
+        nanokvm_die "compact NanoKVM carrier has missing or mismatched A/B payloads"
+    if [ -e "$boot_backup/boot-b.itb" ]; then
+        [ -s "$boot_backup/boot-b.itb" ] || nanokvm_die "carrier has an empty boot-b.itb"
+        return 0
+    fi
+    clone_bytes=$(stat -c %s "$boot_backup/boot.sd")
+    mem_available_kib=$(sed -n 's/^MemAvailable:[[:space:]]*\([0-9]*\).*/\1/p' /proc/meminfo)
+    [ "$mem_available_kib" -ge "$(((clone_bytes + 1023) / 1024 + 16384))" ] ||
+        nanokvm_die "not enough RAM to initialize boot slot B"
+    cp "$boot_backup/boot.sd" "$boot_backup/boot-b.itb" &&
+        cmp -s "$boot_backup/boot.sd" "$boot_backup/boot-b.itb" ||
+        nanokvm_die "could not initialize boot slot B from A"
+    (cd "$boot_backup" && find . -type f -exec sha256sum '{}' ';') >"$migration_dir/boot.sha256" ||
+        nanokvm_die "could not checksum initialized NanoKVM boot files"
 }
 
 nanokvm_restore_boot() {
@@ -239,7 +266,7 @@ nanokvm_restore_boot() {
     sync
     (cd "$boot_mount" && sha256sum -c "$migration_dir/boot.sha256") ||
         nanokvm_die "installed boot file verification failed"
-    rm -f "$boot_mount/bootgrow" || nanokvm_die "cannot complete boot expansion"
+    rm -f "$boot_mount/bootgrow" "$boot_mount/bootclone" || nanokvm_die "cannot complete boot expansion"
     sync
     umount "$boot_mount" || nanokvm_die "cannot release installed boot filesystem"
 }

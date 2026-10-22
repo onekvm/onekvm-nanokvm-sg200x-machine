@@ -125,6 +125,10 @@ existing ext4/f2fs. Installed Cube/PCIe and both Pro media use a 128 MiB boot FA
 SD release carriers size their FAT to the boot files plus headroom. The `bootgrow`
 marker requests a 128 MiB installed FAT: firstboot protects rootfs and all boot
 files (including firstboot configuration) in RAM before recreating partitions;
+Cube/PCIe carriers also use `bootclone` containing `A` to ship only `boot.sd`.
+Before changing partitions, firstboot creates and checks an independent
+`boot-b.itb` in the protected RAM copy, retaining matching A/B build IDs.
+Both installation markers are removed after restoring the installed FAT.
 eMMC also retains its vendor raw A/B boot payload ranges. Legacy Cube cards
 with the former 32 MiB loader remain valid upgrade targets. OE recipes remain in `onekvm-distro`; Pro boot entry limits
 are documented in `onekvm-distro/docs/nanokvm-pro-ab-recovery.md`.
