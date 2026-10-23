@@ -5,7 +5,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export ONEKVM_EDID_MODEL_PATH=$work/model
 export ONEKVM_EDID_DEVICE=$work/device
-export ONEKVM_EDID_PRESET=$root/share/edid/1080p60.edid.bin
+export ONEKVM_EDID_PRESET=$root/share/edid/pro/1080p60.edid.bin
 export ONEKVM_EDID_STATE_DIR=$work/state
 init=$root/src/onekvm-machine-nanokvm-pro-edid
 printf 'Sipeed NanoKVM Pro (AX630C)\000' >"$work/model"

@@ -6,3 +6,4 @@ onekvm-machine-nanokvm-i2c-probe
 .*.cmd
 Module.symvers
 modules.order
+__pycache__/
