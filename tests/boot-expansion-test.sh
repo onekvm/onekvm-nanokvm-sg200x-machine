@@ -23,6 +23,9 @@ printf 'boot kernel a\n' >"$filesystem/boot.sd"
 printf 'boot kernel b\n' >"$filesystem/boot-b.itb"
 printf 'firmware\n' >"$filesystem/fip.bin"
 printf 'boot environment\n' >"$filesystem/uEnv.txt"
+printf 'pro kernel a\n' >"$filesystem/Image-a"
+printf 'pro dtb a\n' >"$filesystem/ax630c-a.dtb"
+printf 'pro initramfs a\n' >"$filesystem/initramfs-a.uimg"
 (cd "$filesystem" && sha256sum firstboot.txt boot.sd boot-b.itb fip.bin uEnv.txt) >"$work/expected.sha256"
 fatal() { echo "$*" >&2; exit 1; }
 msg() { :; }
@@ -45,11 +48,15 @@ export PATH=$work/bin:$PATH
 onekvm_storage_select
 nanokvm_inspect_carrier
 [ "$grow_boot:$source_loader_size:$source_root_start:$loader_size:$root_a_start:$userdata_start" = true:73728:75776:262144:264192:790528 ]
+storage_media=pro-sd
 nanokvm_copy_boot_to_ram
 [ ! -e "$work/formatted" ]
 nanokvm_restore_boot
 [ -e "$work/formatted" ] && [ ! -e "$filesystem/bootgrow" ]
 (cd "$filesystem" && sha256sum -c "$work/expected.sha256")
+cmp "$filesystem/Image-a" "$filesystem/Image-b"
+cmp "$filesystem/ax630c-a.dtb" "$filesystem/ax630c-b.dtb"
+cmp "$filesystem/initramfs-a.uimg" "$filesystem/initramfs-b.uimg"
 # A shipped 32 MiB layout without the new marker retains its geometry.
 printf '65536\n' >"$work/sys/mmcblk0p1/size"
 printf '67584\n' >"$work/sys/mmcblk0p2/start"

@@ -227,6 +227,7 @@ nanokvm_copy_boot_to_ram() {
     (cd "$boot_backup" && sha256sum -c "$migration_dir/boot.sha256") ||
         nanokvm_die "boot RAM copy verification failed"
     nanokvm_expand_compact_nanokvm_boot
+    nanokvm_expand_compact_pro_sd_boot
     umount "$boot_mount" || nanokvm_die "cannot release carrier boot filesystem"
 }
 
@@ -254,6 +255,26 @@ nanokvm_expand_compact_nanokvm_boot() {
         nanokvm_die "could not initialize boot slot B from A"
     (cd "$boot_backup" && find . -type f -exec sha256sum '{}' ';') >"$migration_dir/boot.sha256" ||
         nanokvm_die "could not checksum initialized NanoKVM boot files"
+}
+
+nanokvm_expand_compact_pro_sd_boot() {
+    [ "$storage_media" = pro-sd ] || return 0
+    [ "$grow_boot" = true ] || return 0
+    # The downloadable Pro SD carrier contains only slot A's large payloads.
+    # Materialize slot B before the partition table is rebuilt, while both the
+    # source files and the protected copy are available. Slot scripts remain
+    # separate because their root PARTUUID and loaded filenames differ.
+    for pair in \
+        'Image-a Image-b' \
+        'ax630c-a.dtb ax630c-b.dtb' \
+        'initramfs-a.uimg initramfs-b.uimg'; do
+        set -- $pair
+        [ -f "$boot_backup/$1" ] || nanokvm_die "compact Pro SD carrier is missing $1"
+        [ -e "$boot_backup/$2" ] || cp "$boot_backup/$1" "$boot_backup/$2" ||
+            nanokvm_die "could not materialize compact Pro SD $2"
+    done
+    (cd "$boot_backup" && find . -type f -exec sha256sum '{}' ';') >"$migration_dir/boot.sha256" ||
+        nanokvm_die "could not checksum expanded Pro SD boot files"
 }
 
 nanokvm_restore_boot() {
