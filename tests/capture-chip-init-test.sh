@@ -64,7 +64,7 @@ chmod +x "$work/bin/cat" "$work/bin/dd"
 PATH="$work/bin:$PATH" "$init"
 test "$(cat "$work/reads")" -eq 3
 test "$(cat "$work/writes")" = write
-# A C bridge must not touch flash or leave a false initialization marker.
+# C manual EDID support must not enable automatic writes or a false marker.
 printf 'lt6911c\n' >"$work/chip_id"
 ONEKVM_EDID_DEVICE=/nonexistent ONEKVM_EDID_STATE_DIR="$work/c-state" "$init"
 test ! -e "$work/c-state"

@@ -21,15 +21,15 @@ if [ "$chip_path" = /proc/lt6911_info/chip_id ] && [ -d /proc/lt6911_info ]; the
         ln -s /proc/lt6911_info /run/onekvm/lt6911_info
     fi
 fi
-# Sipeed's C map has no EDID flash implementation. Keep its existing EDID;
-# lack of that optional capability must not prevent Core from starting.
+# Keep C's factory EDID on installation. Its guarded manual EDID interface
+# does not imply that an unverified Pro C erase should run automatically.
 [ -r "$chip_path" ] || {
     echo "Pro EDID: bridge chip identity unavailable; left unchanged" >&2
     exit 1
 }
 chip=$(tr -d '\r\n' <"$chip_path")
 case "$chip" in
-    lt6911c) echo "Pro EDID: LT6911C flash unsupported; retaining current EDID"; exit 0 ;;
+    lt6911c) echo "Pro EDID: LT6911C retaining factory EDID; manual management available"; exit 0 ;;
     lt6911uxc|lt6911d) ;;
     *) echo "Pro EDID: unsupported bridge chip: $chip" >&2; exit 1 ;;
 esac

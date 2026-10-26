@@ -116,8 +116,9 @@ This uses the bridge driver's EDID operation; firmware code is not replaced.
 
 The Pro bridge can be LT6911UXC, LT6911D or LT6911C. The family driver detects
 the register ID rather than assuming UXC from the board name. UXC and D use
-their own flash sequences; C has no Pro flash implementation in the Sipeed
-SDK and retains its existing EDID without creating an initialization marker.
+their own flash sequences. C supports guarded manual EDID management, but
+retains its factory EDID on installation without creating an initialization
+marker; its Pro erase extent still needs hardware validation.
 A missing interface or unknown chip remains an initialization failure.
 The Pro hook links `/run/onekvm/lt6911_info` to `/proc/lt6911_info`, providing
 the same shell lookup path used by the SG2002 MMF diagnostic cache.
