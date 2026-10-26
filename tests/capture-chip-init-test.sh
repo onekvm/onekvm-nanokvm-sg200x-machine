@@ -64,30 +64,27 @@ chmod +x "$work/bin/cat" "$work/bin/dd"
 PATH="$work/bin:$PATH" "$init"
 test "$(cat "$work/reads")" -eq 3
 test "$(cat "$work/writes")" = write
-# UXC restores user data into Shadow RAM every boot, never the Flash node.
+# UXC initializes Flash once; later boots never replay a RAM preference.
 printf 'lt6911uxc\n' >"$work/chip_id"
 export ONEKVM_EDID_SHADOW_DEVICE=$work/shadow
 cp "$root/share/edid/pro/720p60.edid.bin" "$work/shadow"
-cp "$work/device" "$work/flash-sentinel"
+cp "$work/shadow" "$work/shadow-sentinel"
+cp "$work/zeros" "$work/device"
 ONEKVM_EDID_STATE_DIR="$work/uxc-state" "$init"
-cmp "$work/shadow" "$ONEKVM_EDID_PRESET"
-cmp "$work/uxc-state/active.bin" "$ONEKVM_EDID_PRESET"
-cmp "$work/device" "$work/flash-sentinel"
-# Simulate bridge power loss while retaining the successful-init marker.
-cp "$root/share/edid/pro/720p60.edid.bin" "$work/shadow"
+cmp "$work/device" "$ONEKVM_EDID_PRESET"
+test -f "$work/uxc-state/pro-default-initialized"
+test ! -e "$work/uxc-state/active.bin"
+cmp "$work/shadow" "$work/shadow-sentinel"
+# An obsolete userspace preference must not replace a newer Flash value.
+cp "$root/share/edid/pro/720p60.edid.bin" "$work/device"
+cp "$ONEKVM_EDID_PRESET" "$work/uxc-state/active.bin"
 ONEKVM_EDID_STATE_DIR="$work/uxc-state" "$init"
-cmp "$work/shadow" "$ONEKVM_EDID_PRESET"
-# A later user preference survives restart and package upgrades.
-cp "$root/share/edid/pro/720p60.edid.bin" "$work/uxc-state/active.bin"
-ONEKVM_EDID_STATE_DIR="$work/uxc-state" "$init"
-cmp "$work/shadow" "$work/uxc-state/active.bin"
-cmp "$work/device" "$work/flash-sentinel"
-ONEKVM_EDID_SHADOW_DEVICE=/nonexistent ONEKVM_EDID_STATE_DIR="$work/uxc-state" "$init"
-# An unsupported optional Shadow profile must leave Core bootable.
-: >"$work/shadow"
-ONEKVM_EDID_STATE_DIR="$work/uxc-unsupported" "$init"
-test ! -e "$work/uxc-unsupported"
-cmp "$work/device" "$work/flash-sentinel"
+cmp "$work/device" "$work/shadow-sentinel"
+cmp "$work/shadow" "$work/shadow-sentinel"
+# Lack of temporary Shadow support does not disable permanent Flash setup.
+cp "$work/zeros" "$work/device"
+ONEKVM_EDID_SHADOW_DEVICE=/nonexistent ONEKVM_EDID_STATE_DIR="$work/uxc-flash-only" "$init"
+cmp "$work/device" "$ONEKVM_EDID_PRESET"
 # C manual EDID support must not enable automatic writes or a false marker.
 printf 'lt6911c\n' >"$work/chip_id"
 ONEKVM_EDID_DEVICE=/nonexistent ONEKVM_EDID_STATE_DIR="$work/c-state" "$init"

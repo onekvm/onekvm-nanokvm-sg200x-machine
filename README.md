@@ -121,14 +121,13 @@ factory EDID on installation without creating an initialization marker; its
 Pro erase extent still needs hardware validation. A missing driver identity
 or unknown chip remains an initialization failure.
 
-UXC uses the kernel's Shadow RAM + HPD interface, including normal writes to
-the historical EDID proc file. Its active preference is stored atomically by
-the AX backend in `/var/lib/onekvm/edid/active.bin`. The hook restores that file
-at boot and before Core starts; the old default marker cannot suppress RAM
-restore. Without a saved preference it selects the bundled default and saves
-it after verification. Matched RAM values do not get rewritten. An unavailable
-optional Shadow profile preserves firmware EDID and leaves Core bootable;
-there is no fallback to Flash. Pro Shadow hardware acceptance is still pending.
+UXC permanent EDID settings are programmed into the bridge Flash. The hook
+initializes the bundled Flash default once, then its marker protects subsequent
+user settings on boot and package upgrades. It never restores `active.bin`
+into RAM or writes EDID before each Core restart. Temporary RAM application
+belongs to the backend's optional mode and does not change this Flash default.
+Unavailable Shadow support only disables temporary mode, not permanent Flash
+management. Pro Shadow hardware acceptance is still pending.
 
 The Pro hook links `/run/onekvm/lt6911_info` to `/proc/lt6911_info`, providing
 the same shell lookup path used by the SG2002 MMF diagnostic cache.
