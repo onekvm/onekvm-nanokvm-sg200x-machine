@@ -5,10 +5,12 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export ONEKVM_EDID_MODEL_PATH=$work/model
 export ONEKVM_EDID_DEVICE=$work/device
+export ONEKVM_EDID_CHIP_PATH=$work/chip_id
 export ONEKVM_EDID_PRESET=$root/share/edid/pro/1080p60.edid.bin
 export ONEKVM_EDID_STATE_DIR=$work/state
 init=$root/src/onekvm-machine-nanokvm-pro-edid
 printf 'Sipeed NanoKVM Pro (AX630C)\000' >"$work/model"
+printf 'lt6911d\n' >"$work/chip_id"
 dd if=/dev/zero of="$work/device" bs=256 count=1 2>/dev/null
 "$init"
 cmp "$work/device" "$ONEKVM_EDID_PRESET"
@@ -62,6 +64,24 @@ chmod +x "$work/bin/cat" "$work/bin/dd"
 PATH="$work/bin:$PATH" "$init"
 test "$(cat "$work/reads")" -eq 3
 test "$(cat "$work/writes")" = write
+# A C bridge must not touch flash or leave a false initialization marker.
+printf 'lt6911c\n' >"$work/chip_id"
+ONEKVM_EDID_DEVICE=/nonexistent ONEKVM_EDID_STATE_DIR="$work/c-state" "$init"
+test ! -e "$work/c-state"
+# A missing driver still fails; it is not an optional C capability.
+rm "$work/chip_id"
+if ONEKVM_EDID_STATE_DIR="$work/missing-id" "$init"; then
+    echo "missing chip identity allowed EDID programming" >&2; exit 1
+fi
+test ! -e "$work/missing-id"
+if ONEKVM_EDID_DEVICE=/nonexistent ONEKVM_EDID_STATE_DIR="$work/missing" "$init"; then
+    echo "missing bridge interface was accepted" >&2; exit 1
+fi
+printf 'unknown\n' >"$work/chip_id"
+if ONEKVM_EDID_STATE_DIR="$work/unknown" "$init"; then
+    echo "unknown bridge chip was accepted" >&2; exit 1
+fi
+printf 'lt6911uxc\n' >"$work/chip_id"
 # Another board must not read or write the Pro bridge interface.
 printf 'NanoKVM Cube\000' >"$work/model"
 ONEKVM_EDID_DEVICE=/nonexistent ONEKVM_EDID_STATE_DIR="$work/other" "$init"

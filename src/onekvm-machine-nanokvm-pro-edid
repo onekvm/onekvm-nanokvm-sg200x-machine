@@ -4,6 +4,7 @@ set -eu
 
 model_path=${ONEKVM_EDID_MODEL_PATH:-/proc/device-tree/model}
 device=${ONEKVM_EDID_DEVICE:-/proc/lt6911_info/edid}
+chip_path=${ONEKVM_EDID_CHIP_PATH:-/proc/lt6911_info/chip_id}
 preset=${ONEKVM_EDID_PRESET:-/usr/share/onekvm/edid/presets/factory.edid.bin}
 state=${ONEKVM_EDID_STATE_DIR:-/var/lib/onekvm/edid}
 marker=$state/pro-default-initialized
@@ -12,6 +13,25 @@ model=$(tr -d '\000' <"$model_path")
 case "$model" in
     *NanoKVM*Pro*) ;;
     *) echo "Pro EDID: another machine; skip"; exit 0 ;;
+esac
+# A common shell lookup path; hardware access still belongs to the Pro driver.
+if [ "$chip_path" = /proc/lt6911_info/chip_id ] && [ -d /proc/lt6911_info ]; then
+    mkdir -p /run/onekvm
+    if [ ! -e /run/onekvm/lt6911_info ] && [ ! -L /run/onekvm/lt6911_info ]; then
+        ln -s /proc/lt6911_info /run/onekvm/lt6911_info
+    fi
+fi
+# Sipeed's C map has no EDID flash implementation. Keep its existing EDID;
+# lack of that optional capability must not prevent Core from starting.
+[ -r "$chip_path" ] || {
+    echo "Pro EDID: bridge chip identity unavailable; left unchanged" >&2
+    exit 1
+}
+chip=$(tr -d '\r\n' <"$chip_path")
+case "$chip" in
+    lt6911c) echo "Pro EDID: LT6911C flash unsupported; retaining current EDID"; exit 0 ;;
+    lt6911uxc|lt6911d) ;;
+    *) echo "Pro EDID: unsupported bridge chip: $chip" >&2; exit 1 ;;
 esac
 [ ! -f "$marker" ] || exit 0
 [ -r "$device" ] && [ -w "$device" ] || {
