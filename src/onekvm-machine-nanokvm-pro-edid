@@ -4,6 +4,8 @@ set -eu
 
 model_path=${ONEKVM_EDID_MODEL_PATH:-/proc/device-tree/model}
 device=${ONEKVM_EDID_DEVICE:-/proc/lt6911_info/edid}
+shadow=${ONEKVM_EDID_SHADOW_DEVICE:-/proc/lt6911_info/edid_shadow}
+ram=0
 chip_path=${ONEKVM_EDID_CHIP_PATH:-/proc/lt6911_info/chip_id}
 preset=${ONEKVM_EDID_PRESET:-/usr/share/onekvm/edid/presets/factory.edid.bin}
 state=${ONEKVM_EDID_STATE_DIR:-/var/lib/onekvm/edid}
@@ -30,11 +32,22 @@ fi
 chip=$(tr -d '\r\n' <"$chip_path")
 case "$chip" in
     lt6911c) echo "Pro EDID: LT6911C retaining factory EDID; manual management available"; exit 0 ;;
-    lt6911uxc|lt6911d) ;;
+    lt6911uxc)
+        # Restore the user's preference into volatile RAM on each boot. A
+        # missing Shadow interface must never fall back to a Flash writer.
+        ram=1
+        device=$shadow
+        if [ -f "$state/active.bin" ]; then preset=$state/active.bin; fi
+        ;;
+    lt6911d) ;;
     *) echo "Pro EDID: unsupported bridge chip: $chip" >&2; exit 1 ;;
 esac
-[ ! -f "$marker" ] || exit 0
+if [ "$ram" -eq 0 ] && [ -f "$marker" ]; then exit 0; fi
 [ -r "$device" ] && [ -w "$device" ] || {
+    if [ "$ram" -eq 1 ]; then
+        echo "Pro EDID: UXC Shadow interface unavailable; retaining firmware EDID" >&2
+        exit 0
+    fi
     echo "Pro EDID: bridge EDID interface unavailable" >&2
     exit 1
 }
@@ -43,7 +56,12 @@ esac
     exit 1
 }
 
+if [ "$ram" -eq 1 ] && [ "$(wc -c <"$device")" -ne 256 ]; then
+    echo "Pro EDID: UXC Shadow profile unavailable; retaining firmware EDID" >&2
+    exit 0
+fi
 mkdir -p "$state"
+changed=0
 work=$(mktemp -d "$state/.pro-default.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 cat "$device" >"$work/before.bin"
@@ -57,14 +75,15 @@ if ! cmp -s "$preset" "$work/before.bin"; then
         cp "$work/before.bin" "$work/backup.bin"
         mv "$work/backup.bin" "$state/before-pro-default.bin"
         sync
+        changed=1
     fi
-    # The driver validates both checksums, programs only the EDID region,
-    # verifies it and power-cycles the bridge. It requires one 256-byte write.
+    # One 256-byte write. UXC uses RAM + HPD, D uses its own Flash protocol;
+    # both validate EDID and verify readback in the kernel.
     dd if="$preset" of="$device" bs=256 count=1
     # The bridge has just restarted and the proc reader can still serve its
     # previous 500 ms cache. Retry reads only; never reprogram on a stale read.
     for attempt in 1 2 3 4 5; do
-        sleep 0.6
+        if [ "$ram" -eq 1 ]; then sleep 0.05; else sleep 0.6; fi
         if cat "$device" >"$work/after.bin" &&
             cmp -s "$preset" "$work/after.bin"; then
             break
@@ -75,7 +94,19 @@ if ! cmp -s "$preset" "$work/before.bin"; then
         exit 1
     }
 fi
-sha256sum "$preset" | cut -d ' ' -f 1 >"$work/initialized"
-mv "$work/initialized" "$marker"
-sync
-echo "Pro EDID: 1920x1080@60 default initialized"
+if [ "$ram" -eq 1 ] && [ ! -f "$state/active.bin" ]; then
+    cp "$preset" "$work/active.bin"
+    mv "$work/active.bin" "$state/active.bin"
+    changed=1
+fi
+if [ ! -f "$marker" ]; then
+    sha256sum "$preset" | cut -d ' ' -f 1 >"$work/initialized"
+    mv "$work/initialized" "$marker"
+    changed=1
+fi
+if [ "$changed" -eq 1 ]; then sync; fi
+if [ "$ram" -eq 1 ]; then
+    echo "Pro EDID: UXC Shadow preference restored; bridge Flash unchanged"
+else
+    echo "Pro EDID: 1920x1080@60 default initialized"
+fi

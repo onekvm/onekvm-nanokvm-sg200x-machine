@@ -115,11 +115,21 @@ clears this marker, so factory reset restores this preferred-1080p60 default on 
 This uses the bridge driver's EDID operation; firmware code is not replaced.
 
 The Pro bridge can be LT6911UXC, LT6911D or LT6911C. The family driver detects
-the register ID rather than assuming UXC from the board name. UXC and D use
-their own flash sequences. C supports guarded manual EDID management, but
-retains its factory EDID on installation without creating an initialization
-marker; its Pro erase extent still needs hardware validation.
-A missing interface or unknown chip remains an initialization failure.
+the register ID rather than assuming UXC from the board name. D uses its own
+Flash sequence. C supports guarded manual EDID management, but retains its
+factory EDID on installation without creating an initialization marker; its
+Pro erase extent still needs hardware validation. A missing driver identity
+or unknown chip remains an initialization failure.
+
+UXC uses the kernel's Shadow RAM + HPD interface, including normal writes to
+the historical EDID proc file. Its active preference is stored atomically by
+the AX backend in `/var/lib/onekvm/edid/active.bin`. The hook restores that file
+at boot and before Core starts; the old default marker cannot suppress RAM
+restore. Without a saved preference it selects the bundled default and saves
+it after verification. Matched RAM values do not get rewritten. An unavailable
+optional Shadow profile preserves firmware EDID and leaves Core bootable;
+there is no fallback to Flash. Pro Shadow hardware acceptance is still pending.
+
 The Pro hook links `/run/onekvm/lt6911_info` to `/proc/lt6911_info`, providing
 the same shell lookup path used by the SG2002 MMF diagnostic cache.
 
