@@ -40,6 +40,12 @@ make
 Yocto 配方仍保留在 `onekvm-distro`，因为其中包含发行版专用依赖、安装路径和
 升级处理逻辑。配方继续使用现有软件包名，以保持升级兼容性。
 
+## 自动码率上限
+
+机型配置的 `video_auto_bitrate_max_kbps` 定义自动自适应码率上限：Cube 为
+10000 kbit/s（10 Mbps），Pro 的机型检测配置为 20000 kbit/s（20 Mbps）。
+Core 取此值与视频后端上限的较小值；手动码率仍使用后端支持范围。
+
 ## EDID 预设
 
 机型包将对应机型的 EDID 预设安装到 `/usr/share/onekvm/edid/presets/`。
