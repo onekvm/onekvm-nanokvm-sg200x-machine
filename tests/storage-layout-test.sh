@@ -13,7 +13,7 @@ onekvm_storage_select
 [ "$storage_media:$disk:$root_slot_bytes:$root_b_start:$userdata_start" = pro-sd:/dev/mmcblk2:134217728:526336:788480 ]
 printf '%s\n' 'root=PARTLABEL=pro-rootfs-a rauc.slot=A onekvm.media=pro-emmc' >"$ONEKVM_CMDLINE_FILE"
 onekvm_storage_select
-[ "$storage_media:$disk:$root_slot_bytes:$root_b_start:$userdata_start" = pro-emmc:/dev/mmcblk0:134217728:830976:1093120 ]
+[ "$storage_media:$disk:$root_slot_bytes:$root_b_start:$userdata_start" = pro-emmc:/dev/mmcblk0:134217728:565248:827392 ]
 printf '%s\n' 'root=/dev/mmcblk0p3 rauc.slot=B' >"$ONEKVM_CMDLINE_FILE"
 onekvm_storage_select
 [ "$storage_media:$disk:$root_slot_bytes:$root_b_start:$userdata_start" = nanokvm:/dev/mmcblk0:134217728:528384:790528 ]

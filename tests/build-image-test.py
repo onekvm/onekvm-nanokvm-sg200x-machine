@@ -28,7 +28,7 @@ class ImageTests(unittest.TestCase):
     def test_all_media_have_128_mib_and_preserve_cube_alignment(self):
         expected = {'nanokvm': (264192, 528384, 790528),
                     'pro-sd': (264192, 526336, 788480),
-                    'pro-emmc': (568832, 830976, 1093120)}
+                    'pro-emmc': (303104, 565248, 827392)}
         for profile, offsets in expected.items():
             with self.subTest(profile=profile):
                 _, _, _, a, count, b, data = builder.LAYOUTS[profile]
@@ -66,7 +66,10 @@ class ImageTests(unittest.TestCase):
                 self.assertEqual(int(manifest['installed_rootfs_a_start_sector']), builder.LAYOUTS[profile][3])
                 self.assertEqual(int(manifest['userdata_start_sector']), builder.LAYOUTS[profile][6])
                 if profile == 'pro-emmc':
-                    self.assertIn('128M@157024256(pro-boot),128M@291241984(pro-rootfs-a),128M(pro-rootfs-b)', manifest['blkdevparts'])
+                    self.assertEqual(manifest['blkdevparts'],
+                                     'mmcblk0:128M@20971520(pro-boot),128M@155189248(pro-rootfs-a),128M(pro-rootfs-b),-(pro-userdata)')
+                    self.assertEqual(manifest['bootloader_preserve_bytes'], '20971520')
+                    self.assertNotIn('boot_selector_offset', manifest)
                     with output.open('rb') as source:
                         self.assertEqual(source.read(512), bytes(512))
                 else:

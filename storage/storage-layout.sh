@@ -96,7 +96,8 @@ onekvm_storage_select() {
             userdata_uuid=4f4b5650-0000-4000-8000-000000000004
             storage_compatible='OneKVM NanoKVM Pro' ;;
         pro-emmc)
-            loader_start=306688; loader_size=262144; root_a_start=568832
+            # After the SPL/ATF/U-Boot/OP-TEE prefix. Same slot sizes as pro-sd.
+            loader_start=40960; loader_size=262144; root_a_start=303104
             userdata_uuid=4f4b5651-0000-4000-8000-000000000004
             storage_compatible='OneKVM NanoKVM Pro' ;;
     esac

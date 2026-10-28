@@ -34,11 +34,21 @@ def layout(disk_id, boot_at, boot_size, root_at, root_b_gap=0):
             root_at + ROOTFS_SLOT_SECTORS + root_b_gap,
             root_at + 2 * ROOTFS_SLOT_SECTORS + root_b_gap)
 
+# Stock SPL loads ddrinit, ATF, U-Boot and OP-TEE from fixed offsets.
+# optee_b ends at byte 20709376. The four OS partitions use the same sizes
+# as the Pro SD card and start on the next 1 MiB boundary. There is no MBR.
+PRO_EMMC_BOOT_SECTOR = 20 * 1024 * 1024 // 512
+PRO_EMMC_ROOT_SECTOR = PRO_EMMC_BOOT_SECTOR + ROOTFS_SLOT_SECTORS
+
+def emmc_blkdevparts(boot_at, root_at):
+    return ('mmcblk0:128M@%d(pro-boot),128M@%d(pro-rootfs-a),'
+            '128M(pro-rootfs-b),-(pro-userdata)') % (boot_at * 512, root_at * 512)
+
 LAYOUTS = {
     # Keep the 1 MiB gap before B for the Cube's 2 MiB alignment.
     'nanokvm': layout(0x4f4b564d, 1, 262144, 264192, root_b_gap=2048),
     'pro-sd': layout(0x4f4b5650, 2048, 262144, 264192),
-    'pro-emmc': layout(None, 306688, 262144, 568832),
+    'pro-emmc': layout(None, PRO_EMMC_BOOT_SECTOR, 262144, PRO_EMMC_ROOT_SECTOR),
 }
 
 def digest(path, offset=0, size=None):
@@ -168,7 +178,7 @@ def build(profile, boot, rootfs, output, build_id, raw=()):
         assert digest(path) == digest(output, at, path.stat().st_size), 'payload checksum mismatch'
     if profile == 'pro-emmc':
         fd = os.open(output, os.O_RDONLY)
-        assert os.lseek(fd, 0, os.SEEK_DATA) >= 22806528, 'vendor boot prefix was written'
+        assert os.lseek(fd, 0, os.SEEK_DATA) >= boot_at * 512, 'vendor boot prefix was written'
         os.close(fd)
     payload_sha256, image_sha256 = append_trailer(output, profile, image_size, build_id)
     file_sha256 = digest(output)
@@ -192,9 +202,9 @@ def build(profile, boot, rootfs, output, build_id, raw=()):
     if disk_id:
         manifest['disk_id'] = '%08x' % disk_id
     else:
-        manifest.update(bootloader_preserve_bytes=22806528, boot0='absent',
-                        boot_selector_offset=156958720, rootfs_b_firstboot='copy-A',
-                        blkdevparts='mmcblk0:128M@157024256(pro-boot),128M@291241984(pro-rootfs-a),128M(pro-rootfs-b),-(pro-userdata)')
+        manifest.update(bootloader_preserve_bytes=boot_at * 512, boot0='absent',
+                        rootfs_b_firstboot='copy-A',
+                        blkdevparts=emmc_blkdevparts(boot_at, target_root_at))
     Path(str(output) + '.manifest').write_text(''.join('%s=%s\n' % pair for pair in sorted(manifest.items())))
     Path(str(output) + '.sha256').write_text('%s  %s\n' % (file_sha256, Path(output).name))
 
