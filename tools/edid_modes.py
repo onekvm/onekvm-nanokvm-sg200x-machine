@@ -81,7 +81,7 @@ def generate_mode(width, height, aspect, pro):
                     0x67, 3, 12, 0, 0x10, 0, 0, max(5, math.ceil(clock / 5000)),
                     0xE2, 0, 0xCA))
     cta = bytearray(128)
-    cta[:4] = bytes((2, 3, 4 + len(blocks), 0x70))
+    cta[:4] = bytes((2, 3, 4 + len(blocks), 0xf0))
     cta[4:4 + len(blocks)] = blocks
     for block in (base, cta):
         block[127] = -sum(block[:127]) & 255

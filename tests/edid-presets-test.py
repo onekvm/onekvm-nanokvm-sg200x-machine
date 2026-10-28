@@ -15,6 +15,11 @@ for pro in [False, True]:
         data = path.read_bytes()
         assert len(data) == 256 and data[:8] == bytes.fromhex('00ffffffffffff00'), path
         assert data[126] == 1 and data[128:130] == b'\x02\x03', path
+        # CTA byte 3 advertises underscan/basic audio/YCbCr support.  A
+        # preferred base-block DTD must not be paired with a bogus native CTA
+        # DTD count.
+        if path.name != 'factory.edid.bin':
+            assert data[131] & 0x80 and (data[131] & 0x0f) == 0, path
         assert sum(data[:128]) % 256 == sum(data[128:]) % 256 == 0, path
         if 'x' not in path.stem:
             continue

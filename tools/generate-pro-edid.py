@@ -95,7 +95,9 @@ def generate(index, modes=MODES, display_name=None):
     # VCDB: selectable RGB/YCbCr quantization; CE and IT modes underscanned.
     blocks += data_block(7, (0, 0xCA))
     cta = bytearray(128)
-    cta[:4] = bytes((2, 3, 4 + len(blocks), 0xF1))
+    # The preferred timing is the base-block DTD.  The optional CTA DTD for
+    # 2160p30 is an additional mode and must not be advertised as native.
+    cta[:4] = bytes((2, 3, 4 + len(blocks), 0xf0))
     cta[4:4 + len(blocks)] = blocks
     if index >= 3:
         offset = 4 + len(blocks)
