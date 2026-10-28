@@ -180,6 +180,15 @@ over. Display failures do not prevent installation or boot.
 
 ## Shared storage
 
+Before the first boot-FAT mount, firstboot validates the selected storage
+layout and checks the unmounted FAT with `fsck.fat -n`. A clean filesystem
+needs no repair or writes. Detected inconsistencies get one automatic repair
+and a read-only verification; errors and timeouts never select Recovery.
+RAM status and checker output are in `/run/onekvm-boot-fat/`. Each checker
+invocation has a 15-second userspace timeout and 2-second kill grace period;
+kernel I/O stalls can still outlive a userspace timeout. Mounted partitions
+and whole disks are rejected by device number, including mount aliases.
+
 `storage/storage-layout.sh`, `storage/build-image.py`, and the firstboot hook
 are shared by Cube/PCIe, Pro SD, and Pro eMMC. Profiles define geometry;
 root parameters select the medium and slot, and ambiguous devices are rejected.

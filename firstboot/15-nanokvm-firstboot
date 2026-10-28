@@ -425,7 +425,6 @@ nanokvm_run() {
     nanokvm_wait_for_block "$disk" || nanokvm_die "SD card was not found"
     nanokvm_wait_for_block "$loader" ||
         nanokvm_die "loader partition was not found"
-    nanokvm_read_splash_language
     nanokvm_wait_for_block "$root_a" ||
         nanokvm_die "rootfs A partition was not found"
 
@@ -436,6 +435,13 @@ nanokvm_run() {
         *) nanokvm_die "boot parameters disagree with storage hardware" ;;
     esac
 
+    # Do not write an unrecognized layout. Carrier geometry is sufficient
+    # for FAT repair; its bootgrow marker is still required for migration.
+    if onekvm_storage_validate 2>/dev/null || onekvm_storage_carrier_geometry; then
+        . /usr/lib/onekvm/boot-fat.sh
+        onekvm_boot_fat_check
+    fi
+    nanokvm_read_splash_language
     nanokvm_inspect_carrier
     read -r disk_size <"/sys/class/block/$disk_name/size"
     userdata_size=$((disk_size - userdata_start))
