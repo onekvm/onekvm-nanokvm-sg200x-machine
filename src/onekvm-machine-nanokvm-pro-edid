@@ -46,7 +46,12 @@ esac
 mkdir -p "$state"
 work=$(mktemp -d "$state/.pro-default.XXXXXX")
 trap 'rm -rf "$work"' EXIT
-cat "$device" >"$work/before.bin"
+read_current_edid() {
+    # Read Flash directly, without a snapshot or userspace power operation.
+    # One bounded read avoids an extra EOF syscall on older kernels.
+    dd if="$device" of="$1" bs=256 count=1 2>/dev/null
+}
+read_current_edid "$work/before.bin"
 [ "$(wc -c <"$work/before.bin")" -eq 256 ] || {
     echo "Pro EDID: incomplete bridge read; left unchanged" >&2
     exit 1
@@ -65,7 +70,7 @@ if ! cmp -s "$preset" "$work/before.bin"; then
     # previous 500 ms cache. Retry reads only; never reprogram on a stale read.
     for attempt in 1 2 3 4 5; do
         sleep 0.6
-        if cat "$device" >"$work/after.bin" &&
+        if read_current_edid "$work/after.bin" &&
             cmp -s "$preset" "$work/after.bin"; then
             break
         fi

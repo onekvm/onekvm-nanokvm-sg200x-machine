@@ -114,6 +114,11 @@ and package upgrades preserve the user's EDID. Clearing OneKVM data also
 clears this marker, so factory reset restores this preferred-1080p60 default on next boot.
 This uses the bridge driver's EDID operation; firmware code is not replaced.
 
+Initialization reads Flash directly with one bounded 256-byte read, without
+using `edid_snapshot` or changing the power interface in userspace. A read
+failure or incomplete value stops initialization without programming Flash
+or recording success. Writes still use the driver's verified Flash readback.
+
 The Pro bridge can be LT6911UXC, LT6911D or LT6911C. The family driver detects
 the register ID rather than assuming UXC from the board name. D uses its own
 Flash sequence. C supports guarded manual EDID management, but retains its

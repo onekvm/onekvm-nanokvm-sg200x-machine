@@ -109,6 +109,10 @@ Core 启动前应用默认值。它先将桥片原 EDID 备份到
 清除 OneKVM 数据也会清除标记，下次启动重新恢复首选 1080p60 的默认值。
 此过程使用桥片驱动的 EDID 操作，不替换固件代码。
 
+初始化直接单次读取 Flash 的 256 字节，不使用 `edid_snapshot`，也不在脚本中
+操作 `power` 接口。读取失败或数据不完整时停止初始化，不写 Flash 或成功标记。
+写入仍由驱动校验 Flash 回读。
+
 Pro 与 Cube/PCIe 共用采集芯片初始化服务。它在 MMF 模块和 Core 启动前按文件名
 顺序执行 `/usr/libexec/onekvm/capture-chip-init.d/` 下的可执行 hook：固件升级
 使用 `10-` 前缀，默认 EDID 使用 `20-`。任一 hook 失败会停止初始化并阻止采集启动。

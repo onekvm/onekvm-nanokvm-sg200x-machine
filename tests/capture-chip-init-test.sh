@@ -5,12 +5,16 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 export ONEKVM_EDID_MODEL_PATH=$work/model
 export ONEKVM_EDID_DEVICE=$work/device
+export ONEKVM_EDID_POWER_DEVICE=$work/power
+export ONEKVM_EDID_SNAPSHOT_DEVICE=$work/snapshot
 export ONEKVM_EDID_CHIP_PATH=$work/chip_id
 export ONEKVM_EDID_PRESET=$root/share/edid/pro/1080p60.edid.bin
 export ONEKVM_EDID_STATE_DIR=$work/state
 init=$root/src/onekvm-machine-nanokvm-pro-edid
 printf 'Sipeed NanoKVM Pro (AX630C)\000' >"$work/model"
 printf 'lt6911d\n' >"$work/chip_id"
+printf off >"$work/power"
+export CAPTURE_INIT_REAL_DD=$(command -v dd)
 dd if=/dev/zero of="$work/device" bs=256 count=1 2>/dev/null
 "$init"
 cmp "$work/device" "$ONEKVM_EDID_PRESET"
@@ -26,7 +30,10 @@ rm "$work/state/pro-default-initialized"
 mkdir "$work/bin"
 cat >"$work/bin/dd" <<'EOF'
 #!/bin/sh
-exit 1
+case " $* " in
+    *" of=$ONEKVM_EDID_DEVICE "*) exit 1 ;;
+esac
+exec "$CAPTURE_INIT_REAL_DD" "$@"
 EOF
 chmod +x "$work/bin/dd"
 if PATH="$work/bin:$PATH" "$init"; then
@@ -40,30 +47,65 @@ cmp "$work/device" "$ONEKVM_EDID_PRESET"
 rm "$work/state/pro-default-initialized"
 cp "$work/zeros" "$work/device"
 export CAPTURE_INIT_REAL_CAT=$(command -v cat)
-export CAPTURE_INIT_REAL_DD=$(command -v dd)
 export CAPTURE_INIT_READS=$work/reads
 export CAPTURE_INIT_WRITES=$work/writes
 export CAPTURE_INIT_STALE=$work/zeros
-cat >"$work/bin/cat" <<'EOF'
+cat >"$work/bin/dd" <<'EOF'
 #!/bin/sh
-if [ "$1" = "$ONEKVM_EDID_DEVICE" ]; then
+if [ "$1" = "if=$ONEKVM_EDID_DEVICE" ]; then
+    [ "$3" = bs=256 ] && [ "$4" = count=1 ] || exit 1
     n=0
     [ ! -f "$CAPTURE_INIT_READS" ] || read -r n <"$CAPTURE_INIT_READS"
     n=$((n + 1))
     echo "$n" >"$CAPTURE_INIT_READS"
-    [ "$n" -ne 2 ] || exec "$CAPTURE_INIT_REAL_CAT" "$CAPTURE_INIT_STALE"
+    if [ "$n" -eq 2 ]; then
+        shift
+        exec "$CAPTURE_INIT_REAL_DD" "if=$CAPTURE_INIT_STALE" "$@"
+    fi
 fi
-exec "$CAPTURE_INIT_REAL_CAT" "$@"
-EOF
-cat >"$work/bin/dd" <<'EOF'
-#!/bin/sh
-echo write >>"$CAPTURE_INIT_WRITES"
+case " $* " in
+    *" of=$ONEKVM_EDID_DEVICE "*) echo write >>"$CAPTURE_INIT_WRITES" ;;
+esac
 exec "$CAPTURE_INIT_REAL_DD" "$@"
 EOF
-chmod +x "$work/bin/cat" "$work/bin/dd"
+chmod +x "$work/bin/dd"
 PATH="$work/bin:$PATH" "$init"
 test "$(cat "$work/reads")" -eq 3
 test "$(cat "$work/writes")" = write
+# Reads must come from Flash even when a different complete snapshot exists.
+cp "$work/zeros" "$work/snapshot"
+cp "$ONEKVM_EDID_PRESET" "$work/device"
+ONEKVM_EDID_STATE_DIR="$work/direct-state" "$init"
+test -f "$work/direct-state/pro-default-initialized"
+test ! -e "$work/direct-state/before-pro-default.bin"
+test "$(cat "$work/power")" = off
+# A Flash read error must fail, without falling back to the valid snapshot
+# or writing the power interface, EDID or a success marker.
+cp "$ONEKVM_EDID_PRESET" "$work/snapshot"
+cat >"$work/bin/dd" <<'EOF'
+#!/bin/sh
+case " $* " in
+    *" if=$ONEKVM_EDID_DEVICE "*) exit 1 ;;
+    *" of=$ONEKVM_EDID_DEVICE "*) echo "unexpected Flash write" >&2; exit 1 ;;
+esac
+exec "$CAPTURE_INIT_REAL_DD" "$@"
+EOF
+if PATH="$work/bin:$PATH" ONEKVM_EDID_STATE_DIR="$work/read-failure" "$init"; then
+    echo "failed Flash read was accepted" >&2; exit 1
+fi
+test ! -e "$work/read-failure/pro-default-initialized"
+test ! -e "$work/read-failure/before-pro-default.bin"
+test "$(cat "$work/power")" = off
+# A short Flash read must also fail, without programming or a false marker.
+printf short >"$work/device"
+if ONEKVM_EDID_STATE_DIR="$work/short-read" "$init"; then
+    echo "short Flash read was accepted" >&2; exit 1
+fi
+test ! -e "$work/short-read/pro-default-initialized"
+test ! -e "$work/short-read/before-pro-default.bin"
+test "$(cat "$work/device")" = short
+test "$(cat "$work/power")" = off
+rm "$work/snapshot"
 # UXC initializes Flash once; later boots never replay a RAM preference.
 printf 'lt6911uxc\n' >"$work/chip_id"
 export ONEKVM_EDID_SHADOW_DEVICE=$work/shadow
