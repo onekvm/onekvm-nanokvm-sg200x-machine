@@ -17,9 +17,14 @@ case "$3" in
     *) exit 1 ;;
 esac
 MOCK
+cat >"$work/bin/sync" <<'MOCK'
+#!/bin/sh
+echo sync >>"$TEST_SYNC_TRACE"
+MOCK
 chmod +x "$work/bin/"*
 export PATH=$work/bin:$PATH ONEKVM_BOOT_DIR=$work/boot
 export TEST_MOUNTED=yes TEST_CORE_ACTIVE=yes TEST_HEALTH_ACTIVE=yes
+export TEST_SYNC_TRACE=$work/syncs
 counter=$ONEKVM_BOOT_DIR/boot_retry_time.txt
 for missing in TEST_MOUNTED TEST_CORE_ACTIVE TEST_HEALTH_ACTIVE; do
     printf '1\n1\n' >"$counter"
@@ -32,5 +37,8 @@ for missing in TEST_MOUNTED TEST_CORE_ACTIVE TEST_HEALTH_ACTIVE; do
 done
 sh "$root/rauc-health/clear-boot-retry"
 [ ! -e "$counter" ]
+[ "$(cat "$TEST_SYNC_TRACE")" = sync ]
+rm "$TEST_SYNC_TRACE"
 sh "$root/rauc-health/clear-boot-retry"
+[ ! -e "$TEST_SYNC_TRACE" ]
 echo 'successful boot cleanup and failed-health preservation tests passed'

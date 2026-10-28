@@ -7,5 +7,6 @@ boot=${ONEKVM_BOOT_DIR:-/boot}
 mountpoint -q "$boot"
 systemctl is-active --quiet onekvm.service
 systemctl is-active --quiet onekvm-rauc-health.service
+[ -e "$boot/boot_retry_time.txt" ] || [ -L "$boot/boot_retry_time.txt" ] || exit 0
 rm -f "$boot/boot_retry_time.txt"
 sync
