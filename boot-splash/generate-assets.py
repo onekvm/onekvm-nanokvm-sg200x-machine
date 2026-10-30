@@ -56,25 +56,29 @@ TRANSLATIONS = {
     "en": (
         "Starting up", "Installing system", "Do not power off or remove the SD card",
         "Setup paused", "Check the serial console for details",
+        "See onekvm-boot-error.txt on the SD card",
         ("Preparing system files", "Saving boot files", "Preparing storage", "Restoring boot files",
          "Installing system files", "Preparing data storage", "Finishing up"),
     ),
     "zh": (
         "正在启动", "正在安装系统", "请勿断电或拔出 SD 卡", "安装已暂停", "请查看串口日志了解详情",
+        "详情在 SD 卡的 onekvm-boot-error.txt",
         ("准备系统文件", "保存启动文件", "准备存储空间", "恢复启动文件", "安装系统文件", "准备数据分区", "完成安装"),
     ),
     "zh_tw": (
         "正在啟動", "正在安裝系統", "請勿斷電或拔出 SD 卡", "安裝已暫停", "請查看序列埠記錄瞭解詳情",
+        "詳情在 SD 卡的 onekvm-boot-error.txt",
         ("準備系統檔案", "儲存啟動檔案", "準備儲存空間", "還原啟動檔案", "安裝系統檔案", "準備資料分割區", "完成安裝"),
     ),
 }
-for language, (starting, installing, warning, paused, error_detail, stages) in TRANSLATIONS.items():
+for language, (starting, installing, warning, paused, error_detail, saved_detail, stages) in TRANSLATIONS.items():
     for name, text, size, color in (
         ("starting", starting, 12, (132, 144, 164)),
         ("installing", installing, 14, (234, 238, 245)),
         ("warning", warning, 10, (132, 144, 164)),
         ("paused", paused, 14, (234, 238, 245)),
         ("error_detail", error_detail, 11, (132, 144, 164)),
+        ("saved_detail", saved_detail, 11, (132, 144, 164)),
     ):
         label(f"{language}_{name}", text, size, color, language)
     for index, text in enumerate(stages, 1):
@@ -99,7 +103,7 @@ for name, width, height, runs in ASSETS:
 for language in TRANSLATIONS:
     lines.extend((
         f"static const struct splash_labels labels_{language} = {{",
-        "    " + ", ".join(f"&{language}_{name}" for name in ("starting", "installing", "warning", "paused", "error_detail")) + ",",
+        "    " + ", ".join(f"&{language}_{name}" for name in ("starting", "installing", "warning", "paused", "error_detail", "saved_detail")) + ",",
         "    { " + ", ".join(f"&{language}_stage_{i}" for i in range(1, 8)) + " },",
         "};",
     ))

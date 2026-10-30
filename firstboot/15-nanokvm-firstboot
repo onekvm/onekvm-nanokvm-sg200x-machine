@@ -7,13 +7,138 @@ nanokvm_enabled() {
 }
 
 nanokvm_die() {
-    nanokvm_splash error
+    # The record is best-effort. A save failure must still reach fatal.
+    nanokvm_save_boot_error "$1" || true
+    if [ "${nanokvm_boot_error_saved:-false}" = true ]; then
+        nanokvm_splash error-saved
+    else
+        nanokvm_splash error
+    fi
     fatal "OneKVM NanoKVM storage migration: $1"
 }
 
 nanokvm_splash() {
     command -v onekvm-boot-splash >/dev/null 2>&1 || return 0
     onekvm-boot-splash --language "${splash_language:-en}" "$@" 2>/dev/null || true
+}
+
+# Leave onekvm-boot-error.txt on the boot FAT. Never read firstboot.txt.
+nanokvm_boot_error_report() {
+    boot_error_reason=$1
+    case ${splash_language:-en} in
+        zh) printf '%s\n' '安装已暂停。原因写在下面。本文件在 SD 卡启动分区，文件名 onekvm-boot-error.txt。' ;;
+        zh_tw) printf '%s\n' '安裝已暫停。原因寫在下面。本檔案在 SD 卡啟動分割區，檔名 onekvm-boot-error.txt。' ;;
+        *) printf '%s\n' 'Setup paused. The reason is below. This file is onekvm-boot-error.txt on the SD card boot partition.' ;;
+    esac
+    printf '\nreason: %s\n' "$boot_error_reason"
+    if [ -r "${ONEKVM_CMDLINE_FILE:-/proc/cmdline}" ]; then
+        printf 'cmdline: %s\n' "$(cat "${ONEKVM_CMDLINE_FILE:-/proc/cmdline}")"
+    fi
+    printf 'media: %s\nslot: %s\ndisk: %s\nloader: %s\n' \
+        "${storage_media:-}" "${storage_slot:-}" "${disk:-}" "${loader:-}"
+    boot_error_sysfs=${ONEKVM_STORAGE_SYSFS:-/sys/class/block}
+    if [ -n "${disk_name:-}" ] && [ -d "$boot_error_sysfs/$disk_name" ]; then
+        printf 'disk-size: %s\n' "$(cat "$boot_error_sysfs/$disk_name/size" 2>/dev/null || printf unknown)"
+        for boot_error_part in "$boot_error_sysfs/$disk_name"p*; do
+            [ -d "$boot_error_part" ] || continue
+            printf 'partition: %s start=%s size=%s\n' \
+                "${boot_error_part##*/}" \
+                "$(cat "$boot_error_part/start" 2>/dev/null || printf -)" \
+                "$(cat "$boot_error_part/size" 2>/dev/null || printf -)"
+        done
+    fi
+    if [ -r /proc/self/mountinfo ]; then
+        printf '\nmounts:\n'
+        awk 'NR<=80 { print }' /proc/self/mountinfo
+    fi
+    if command -v dmesg >/dev/null 2>&1; then
+        printf '\ndmesg:\n'
+        dmesg 2>/dev/null | tail -n 80 || true
+    fi
+}
+
+nanokvm_write_boot_error() {
+    boot_error_dest=$1
+    [ -d "$boot_error_dest" ] || return 1
+    boot_error_tmp=$boot_error_dest/.onekvm-boot-error.tmp
+    rm -f "$boot_error_tmp" || return 1
+    if ! nanokvm_boot_error_report "$2" >"$boot_error_tmp"; then
+        rm -f "$boot_error_tmp"
+        return 1
+    fi
+    mv "$boot_error_tmp" "$boot_error_dest/onekvm-boot-error.txt" || {
+        rm -f "$boot_error_tmp"
+        return 1
+    }
+    sync -f "$boot_error_dest/onekvm-boot-error.txt" 2>/dev/null || sync || true
+    return 0
+}
+
+nanokvm_boot_error_open() {
+    boot_error_mount=
+    boot_error_owned=false
+    boot_error_was_ro=false
+    [ -b "${loader:-}" ] || return 1
+    boot_error_name=${loader##*/}
+    boot_error_sysfs=${ONEKVM_STORAGE_SYSFS:-/sys/class/block}
+    boot_error_dev=$(cat "$boot_error_sysfs/$boot_error_name/dev" 2>/dev/null) || return 1
+    boot_error_mount=$(awk -v part="$boot_error_dev" '$3 == part { print $5; exit }' /proc/self/mountinfo 2>/dev/null || true)
+    if [ -n "$boot_error_mount" ]; then
+        boot_error_opts=$(awk -v part="$boot_error_dev" '$3 == part { print $6; exit }' /proc/self/mountinfo 2>/dev/null || true)
+        case "$boot_error_opts" in
+            ro|ro,*|*,ro|*,ro,*)
+                mount -o remount,rw -- "$boot_error_mount" 2>/dev/null || return 1
+                boot_error_was_ro=true
+                ;;
+        esac
+        return 0
+    fi
+    boot_error_mount=${migration_dir:-/run}/onekvm-boot-error
+    mkdir -p "$boot_error_mount" 2>/dev/null || return 1
+    if command -v timeout >/dev/null 2>&1; then
+        timeout -k 2 5 mount -t vfat -o rw,nodev,nosuid,noexec -- "$loader" "$boot_error_mount" 2>/dev/null || {
+            rmdir "$boot_error_mount" 2>/dev/null || true
+            boot_error_mount=
+            return 1
+        }
+    elif ! mount -t vfat -o rw,nodev,nosuid,noexec -- "$loader" "$boot_error_mount" 2>/dev/null; then
+        rmdir "$boot_error_mount" 2>/dev/null || true
+        boot_error_mount=
+        return 1
+    fi
+    boot_error_owned=true
+    return 0
+}
+
+nanokvm_boot_error_close() {
+    if [ "${boot_error_owned:-false}" = true ]; then
+        umount "$boot_error_mount" 2>/dev/null || true
+        rmdir "$boot_error_mount" 2>/dev/null || true
+    elif [ "${boot_error_was_ro:-false}" = true ]; then
+        mount -o remount,ro -- "$boot_error_mount" 2>/dev/null || true
+    fi
+    boot_error_owned=false
+    boot_error_was_ro=false
+    return 0
+}
+
+nanokvm_save_boot_error() {
+    nanokvm_boot_error_saved=false
+    if [ -n "${ONEKVM_BOOT_ERROR_DIR:-}" ]; then
+        if nanokvm_write_boot_error "$ONEKVM_BOOT_ERROR_DIR" "$1"; then
+            nanokvm_boot_error_saved=true
+        fi
+        return 0
+    fi
+    # Tests and a normal shell must not mount the host disk. Init is pid 1.
+    [ "$$" -eq 1 ] || return 0
+    if nanokvm_boot_error_open; then
+        if nanokvm_write_boot_error "$boot_error_mount" "$1"; then
+            nanokvm_boot_error_saved=true
+        fi
+    fi
+    nanokvm_boot_error_close || true
+    return 0
 }
 
 nanokvm_read_splash_language() {

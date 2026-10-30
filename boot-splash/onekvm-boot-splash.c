@@ -19,7 +19,7 @@ struct splash_asset {
 };
 
 struct splash_labels {
-    const struct splash_asset *starting, *installing, *warning, *paused, *error_detail;
+    const struct splash_asset *starting, *installing, *warning, *paused, *error_detail, *saved_detail;
     const struct splash_asset *stages[7];
 };
 
@@ -72,7 +72,7 @@ static void render(uint16_t *frame, unsigned stage, int failed, const struct spl
     if (failed) {
         draw_asset(frame, &logo_install, 23);
         draw_asset(frame, labels->paused, 86);
-        draw_asset(frame, labels->error_detail, 114);
+        draw_asset(frame, failed > 1 ? labels->saved_detail : labels->error_detail, 114);
     } else if (stage) {
         draw_asset(frame, &logo_install, 23);
         draw_asset(frame, labels->installing, 84);
@@ -215,12 +215,14 @@ int main(int argc, char **argv)
         stage = 0;
     } else if (argc == 2 && !strcmp(argv[1], "error")) {
         failed = 1;
+    } else if (argc == 2 && !strcmp(argv[1], "error-saved")) {
+        failed = 2;
     } else if (argc == 3 && !strcmp(argv[1], "install") &&
                strlen(argv[2]) == 1 && argv[2][0] >= '1' && argv[2][0] <= '7') {
         stage = (unsigned)(argv[2][0] - '0');
     } else {
         fprintf(stderr, "Usage: onekvm-boot-splash [--language en|zh|zh_tw] [--output FILE.ppm | "
-                "--framebuffer /dev/fb0] {boot | install STAGE(1-7) | error}\n");
+                "--framebuffer /dev/fb0] {boot | install STAGE(1-7) | error | error-saved}\n");
         return 2;
     }
     render(frame, stage, failed, labels);

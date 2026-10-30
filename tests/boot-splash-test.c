@@ -71,6 +71,13 @@ int main(void)
         render(en, 0, 1, &labels_en);
         render(zh, 0, 1, &labels_zh);
         assert(memcmp(en, zh, sizeof(en)) != 0);
+        {
+            uint16_t saved_en[WIDTH * HEIGHT], saved_zh[WIDTH * HEIGHT];
+            render(saved_en, 0, 2, &labels_en);
+            render(saved_zh, 0, 2, &labels_zh);
+            assert(memcmp(en, saved_en, sizeof(en)) != 0);
+            assert(memcmp(saved_en, saved_zh, sizeof(saved_en)) != 0);
+        }
     }
     check_rotation(344);
     check_rotation(360);
