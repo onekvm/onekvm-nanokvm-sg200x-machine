@@ -1,5 +1,5 @@
 #!/bin/sh
-# Paused-setup records are split files plus a zip. No block device is mounted.
+# A finished paused-setup record is one zip. A folder remains only if packing fails.
 set -eu
 project=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 work=$(mktemp -d)
@@ -10,19 +10,23 @@ cc -Wall -Wextra -Werror -o "$work/bin/onekvm-boot-error-zip" \
 export PATH=$work/bin:$PATH
 . "$project/firstboot/15-nanokvm-firstboot"
 check_zip() {
-    python3 - "$1" "$2" <<'PY'
-import pathlib, sys, zipfile
-folder, archive = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+    python3 - "$@" <<'PY'
+import os, sys, zipfile
+archive, needles = sys.argv[1], sys.argv[2:]
+names = ["cmdline.txt", "dmesg.txt", "mounts.txt", "reason.txt", "storage.txt"]
 with zipfile.ZipFile(archive) as packed:
     bad = packed.testzip()
     if bad:
         raise SystemExit(bad)
-    names = ["cmdline.txt", "dmesg.txt", "mounts.txt", "reason.txt", "storage.txt"]
     if sorted(packed.namelist()) != names:
         raise SystemExit(packed.namelist())
-    for name in names:
-        if packed.read(name) != (folder / name).read_bytes():
-            raise SystemExit(name)
+    blob = "\n".join(packed.read(name).decode() for name in names)
+secret = os.environ.get("secret", "")
+if secret and secret in blob:
+    raise SystemExit("secret")
+for needle in needles:
+    if needle not in blob:
+        raise SystemExit(needle)
 PY
 }
 fatal() { printf '%s\n' "$*" >"$work/fatal"; exit 7; }
@@ -50,51 +54,37 @@ if (nanokvm_die "userdata contains ext4; refusing destructive migration"); then
 fi
 [ "$(cat "$work/splash")" = error-saved ]
 [ "$(cat "$work/fatal")" = "OneKVM NanoKVM storage migration: userdata contains ext4; refusing destructive migration" ]
-report=$work/boot/onekvm-boot-error/try-1
-[ -f "$report/reason.txt" ]
-[ -f "$report/cmdline.txt" ]
-[ -f "$report/storage.txt" ]
-[ -f "$report/mounts.txt" ]
-[ -f "$report/dmesg.txt" ]
-grep -q '安装已暂停。原因写在下面。这次记录在 SD 卡 onekvm-boot-error/try-1 文件夹，并打包为 try-1.zip。' "$report/reason.txt"
-grep -q 'reason: userdata contains ext4; refusing destructive migration' "$report/reason.txt"
-grep -q 'root=PARTUUID=4f4b5650-03 onekvm.media=pro-sd rauc.slot=B' "$report/cmdline.txt"
-grep -q 'media: pro-sd' "$report/storage.txt"
-grep -q 'slot: B' "$report/storage.txt"
-grep -q 'partition: mmcblk2p1 start=2048 size=262144' "$report/storage.txt"
-grep -q 'disk-size: 61022208' "$report/storage.txt"
-check_zip "$report" "$work/boot/onekvm-boot-error/try-1.zip"
-for record_file in "$report"/* "$work/boot/onekvm-boot-error/try-1.zip"; do
-    if grep -q "$secret" "$record_file"; then
-        echo 'boot error record contains a credential' >&2
-        exit 1
-    fi
-done
+records=$work/boot/onekvm-boot-error
+check_zip "$records/try-1.zip" \
+    '这次记录是 SD 卡 onekvm-boot-error/try-1.zip' \
+    'reason: userdata contains ext4; refusing destructive migration' \
+    'root=PARTUUID=4f4b5650-03 onekvm.media=pro-sd rauc.slot=B' \
+    'media: pro-sd' \
+    'slot: B' \
+    'partition: mmcblk2p1 start=2048 size=262144' \
+    'disk-size: 61022208'
+[ ! -e "$records/try-1" ]
+[ ! -e "$records/.try-1" ]
 [ ! -e "$work/boot/onekvm-boot-error.txt" ]
-[ ! -e "$work/boot/onekvm-boot-error/.try-1" ]
 if (nanokvm_die "rootfs A is not SquashFS; refusing initialization"); then
     echo 'second pause continued' >&2
     exit 1
 fi
-[ -d "$work/boot/onekvm-boot-error/try-2" ]
-grep -q 'reason: rootfs A is not SquashFS; refusing initialization' \
-    "$work/boot/onekvm-boot-error/try-2/reason.txt"
-grep -q 'reason: userdata contains ext4; refusing destructive migration' "$report/reason.txt"
-if grep -q 'refusing initialization' "$report/reason.txt"; then
+[ ! -e "$records/try-2" ]
+check_zip "$records/try-2.zip" 'reason: rootfs A is not SquashFS; refusing initialization'
+check_zip "$records/try-1.zip" 'reason: userdata contains ext4; refusing destructive migration'
+if check_zip "$records/try-1.zip" 'refusing initialization' 2>/dev/null; then
     echo 'first record was replaced' >&2
     exit 1
 fi
-check_zip "$work/boot/onekvm-boot-error/try-2" "$work/boot/onekvm-boot-error/try-2.zip"
-mkdir -p "$work/boot/onekvm-boot-error/try-4"
-printf 'older\n' >"$work/boot/onekvm-boot-error/try-9.zip"
-printf 'skip\n' >"$work/boot/onekvm-boot-error/try-notes"
-mkdir -p "$work/boot/onekvm-boot-error/try-9-extra"
+mkdir -p "$records/try-4"
+printf 'older\n' >"$records/try-9.zip"
+printf 'skip\n' >"$records/try-notes"
+mkdir -p "$records/try-9-extra"
 nanokvm_write_boot_error "$work/boot" 'unknown userdata size; refusing migration'
-[ -d "$work/boot/onekvm-boot-error/try-10" ]
-[ -f "$work/boot/onekvm-boot-error/try-10.zip" ]
-[ ! -e "$work/boot/onekvm-boot-error/try-3" ]
-grep -q 'reason: unknown userdata size; refusing migration' \
-    "$work/boot/onekvm-boot-error/try-10/reason.txt"
+[ ! -e "$records/try-10" ]
+[ ! -e "$records/try-3" ]
+check_zip "$records/try-10.zip" 'reason: unknown userdata size; refusing migration'
 splash_language=zh_tw
 saved_path=$PATH
 PATH=/usr/bin:/bin
