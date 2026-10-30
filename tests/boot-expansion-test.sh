@@ -74,7 +74,7 @@ printf '32\n' >"$filesystem/bootgrow"
 rm "$work/formatted"
 if (nanokvm_inspect_carrier); then echo 'accepted unknown boot size' >&2; exit 1; fi
 [ ! -e "$work/formatted" ]
-[ ! -e "$filesystem/onekvm-boot-error.txt" ]
+[ ! -e "$filesystem/onekvm-boot-error" ]
 echo 'boot expansion preservation and legacy compatibility tests passed'
 
 # Language is read as data; no other CLI statement is evaluated by the shell.

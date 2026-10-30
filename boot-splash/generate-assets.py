@@ -56,18 +56,18 @@ TRANSLATIONS = {
     "en": (
         "Starting up", "Installing system", "Do not power off or remove the SD card",
         "Setup paused", "Check the serial console for details",
-        "See onekvm-boot-error.txt on the SD card",
+        "See folder onekvm-boot-error on the SD card",
         ("Preparing system files", "Saving boot files", "Preparing storage", "Restoring boot files",
          "Installing system files", "Preparing data storage", "Finishing up"),
     ),
     "zh": (
         "正在启动", "正在安装系统", "请勿断电或拔出 SD 卡", "安装已暂停", "请查看串口日志了解详情",
-        "详情在 SD 卡的 onekvm-boot-error.txt",
+        "详情在 SD 卡文件夹 onekvm-boot-error",
         ("准备系统文件", "保存启动文件", "准备存储空间", "恢复启动文件", "安装系统文件", "准备数据分区", "完成安装"),
     ),
     "zh_tw": (
         "正在啟動", "正在安裝系統", "請勿斷電或拔出 SD 卡", "安裝已暫停", "請查看序列埠記錄瞭解詳情",
-        "詳情在 SD 卡的 onekvm-boot-error.txt",
+        "詳情在 SD 卡資料夾 onekvm-boot-error",
         ("準備系統檔案", "儲存啟動檔案", "準備儲存空間", "還原啟動檔案", "安裝系統檔案", "準備資料分割區", "完成安裝"),
     ),
 }

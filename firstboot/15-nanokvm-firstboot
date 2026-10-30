@@ -22,13 +22,14 @@ nanokvm_splash() {
     onekvm-boot-splash --language "${splash_language:-en}" "$@" 2>/dev/null || true
 }
 
-# Leave onekvm-boot-error.txt on the boot FAT. Never read firstboot.txt.
+# Leave onekvm-boot-error/try-N on the boot FAT. Never read firstboot.txt.
 nanokvm_boot_error_report() {
     boot_error_reason=$1
+    boot_error_try=$2
     case ${splash_language:-en} in
-        zh) printf '%s\n' '安装已暂停。原因写在下面。本文件在 SD 卡启动分区，文件名 onekvm-boot-error.txt。' ;;
-        zh_tw) printf '%s\n' '安裝已暫停。原因寫在下面。本檔案在 SD 卡啟動分割區，檔名 onekvm-boot-error.txt。' ;;
-        *) printf '%s\n' 'Setup paused. The reason is below. This file is onekvm-boot-error.txt on the SD card boot partition.' ;;
+        zh) printf '安装已暂停。原因写在下面。这是 SD 卡 onekvm-boot-error 文件夹里的 %s。\n' "$boot_error_try" ;;
+        zh_tw) printf '安裝已暫停。原因寫在下面。這是 SD 卡 onekvm-boot-error 資料夾裡的 %s。\n' "$boot_error_try" ;;
+        *) printf 'Setup paused. The reason is below. This is %s in the onekvm-boot-error folder on the SD card.\n' "$boot_error_try" ;;
     esac
     printf '\nreason: %s\n' "$boot_error_reason"
     if [ -r "${ONEKVM_CMDLINE_FILE:-/proc/cmdline}" ]; then
@@ -60,17 +61,31 @@ nanokvm_boot_error_report() {
 nanokvm_write_boot_error() {
     boot_error_dest=$1
     [ -d "$boot_error_dest" ] || return 1
-    boot_error_tmp=$boot_error_dest/.onekvm-boot-error.tmp
+    boot_error_dir=$boot_error_dest/onekvm-boot-error
+    mkdir -p "$boot_error_dir" || return 1
+    boot_error_next=1
+    for boot_error_existing in "$boot_error_dir"/try-*; do
+        [ -f "$boot_error_existing" ] || continue
+        boot_error_number=${boot_error_existing##*/try-}
+        case "$boot_error_number" in
+            ''|*[!0-9]*|0*) continue ;;
+        esac
+        if [ "$boot_error_number" -ge "$boot_error_next" ]; then
+            boot_error_next=$((boot_error_number + 1))
+        fi
+    done
+    boot_error_try=try-$boot_error_next
+    boot_error_tmp=$boot_error_dir/.tmp
     rm -f "$boot_error_tmp" || return 1
-    if ! nanokvm_boot_error_report "$2" >"$boot_error_tmp"; then
+    if ! nanokvm_boot_error_report "$2" "$boot_error_try" >"$boot_error_tmp"; then
         rm -f "$boot_error_tmp"
         return 1
     fi
-    mv "$boot_error_tmp" "$boot_error_dest/onekvm-boot-error.txt" || {
+    mv "$boot_error_tmp" "$boot_error_dir/$boot_error_try" || {
         rm -f "$boot_error_tmp"
         return 1
     }
-    sync -f "$boot_error_dest/onekvm-boot-error.txt" 2>/dev/null || sync || true
+    sync -f "$boot_error_dir/$boot_error_try" 2>/dev/null || sync || true
     return 0
 }
 
@@ -93,7 +108,7 @@ nanokvm_boot_error_open() {
         esac
         return 0
     fi
-    boot_error_mount=${migration_dir:-/run}/onekvm-boot-error
+    boot_error_mount=${migration_dir:-/run}/onekvm-boot-error-mnt
     mkdir -p "$boot_error_mount" 2>/dev/null || return 1
     if command -v timeout >/dev/null 2>&1; then
         timeout -k 2 5 mount -t vfat -o rw,nodev,nosuid,noexec -- "$loader" "$boot_error_mount" 2>/dev/null || {

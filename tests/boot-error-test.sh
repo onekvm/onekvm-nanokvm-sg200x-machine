@@ -1,5 +1,5 @@
 #!/bin/sh
-# The paused-setup record is a normal file. No block device is mounted.
+# Paused-setup records are try-N files. No block device is mounted.
 set -eu
 project=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 work=$(mktemp -d)
@@ -30,8 +30,9 @@ if (nanokvm_die "userdata contains ext4; refusing destructive migration"); then
 fi
 [ "$(cat "$work/splash")" = error-saved ]
 [ "$(cat "$work/fatal")" = "OneKVM NanoKVM storage migration: userdata contains ext4; refusing destructive migration" ]
-report=$work/boot/onekvm-boot-error.txt
-grep -q '安装已暂停。原因写在下面。本文件在 SD 卡启动分区，文件名 onekvm-boot-error.txt。' "$report"
+report=$work/boot/onekvm-boot-error/try-1
+[ -f "$report" ]
+grep -q '安装已暂停。原因写在下面。这是 SD 卡 onekvm-boot-error 文件夹里的 try-1。' "$report"
 grep -q 'reason: userdata contains ext4; refusing destructive migration' "$report"
 grep -q 'cmdline: root=PARTUUID=4f4b5650-03 onekvm.media=pro-sd rauc.slot=B' "$report"
 grep -q 'media: pro-sd' "$report"
@@ -42,7 +43,30 @@ if grep -q "$secret" "$report"; then
     echo 'boot error record contains a credential' >&2
     exit 1
 fi
-[ ! -e "$work/boot/.onekvm-boot-error.tmp" ]
+[ ! -e "$work/boot/onekvm-boot-error.txt" ]
+[ ! -e "$work/boot/onekvm-boot-error/.tmp" ]
+if (nanokvm_die "rootfs A is not SquashFS; refusing initialization"); then
+    echo 'second pause continued' >&2
+    exit 1
+fi
+[ -f "$work/boot/onekvm-boot-error/try-2" ]
+grep -q 'reason: rootfs A is not SquashFS; refusing initialization' "$work/boot/onekvm-boot-error/try-2"
+grep -q 'reason: userdata contains ext4; refusing destructive migration' "$report"
+if grep -q 'refusing initialization' "$report"; then
+    echo 'first record was replaced' >&2
+    exit 1
+fi
+printf 'older\n' >"$work/boot/onekvm-boot-error/try-4"
+printf 'skip\n' >"$work/boot/onekvm-boot-error/try-notes"
+mkdir -p "$work/boot/onekvm-boot-error/try-9-extra"
+nanokvm_write_boot_error "$work/boot" 'unknown userdata size; refusing migration'
+[ -f "$work/boot/onekvm-boot-error/try-5" ]
+[ ! -e "$work/boot/onekvm-boot-error/try-3" ]
+grep -q 'reason: unknown userdata size; refusing migration' "$work/boot/onekvm-boot-error/try-5"
+splash_language=zh_tw
+nanokvm_write_boot_error "$work/boot" 'cannot identify boot medium'
+grep -q '安裝已暫停。原因寫在下面。這是 SD 卡 onekvm-boot-error 資料夾裡的 try-6。' \
+    "$work/boot/onekvm-boot-error/try-6"
 
 # A directory that cannot be written keeps the serial instruction.
 rm -rf "$work/boot"
