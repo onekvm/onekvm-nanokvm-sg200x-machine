@@ -9,7 +9,7 @@ The shared firstboot hook loads the matching panel modules before storage
 initialization and shows `boot`. Fresh installation advances `install 1` through
 `install 7` at actual storage checkpoints, then returns to the boot logo. An
 initialization error shows `error` before the existing fatal handling. When the
-boot FAT accepts `onekvm-boot-error/try-1` and later numbers, the panel shows `error-saved` instead.
+boot FAT accepts `onekvm-boot-error/try-1/` and `try-1.zip`, then later numbers, the panel shows `error-saved` instead.
 Display failures never stop storage initialization or normal boot. Boards without the
 Desk framebuffer simply skip the artwork; Cube/PCIe retain their OLED module.
 

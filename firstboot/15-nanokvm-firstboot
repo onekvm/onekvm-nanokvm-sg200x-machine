@@ -22,40 +22,86 @@ nanokvm_splash() {
     onekvm-boot-splash --language "${splash_language:-en}" "$@" 2>/dev/null || true
 }
 
-# Leave onekvm-boot-error/try-N on the boot FAT. Never read firstboot.txt.
-nanokvm_boot_error_report() {
-    boot_error_reason=$1
-    boot_error_try=$2
-    case ${splash_language:-en} in
-        zh) printf '安装已暂停。原因写在下面。这是 SD 卡 onekvm-boot-error 文件夹里的 %s。\n' "$boot_error_try" ;;
-        zh_tw) printf '安裝已暫停。原因寫在下面。這是 SD 卡 onekvm-boot-error 資料夾裡的 %s。\n' "$boot_error_try" ;;
-        *) printf 'Setup paused. The reason is below. This is %s in the onekvm-boot-error folder on the SD card.\n' "$boot_error_try" ;;
-    esac
-    printf '\nreason: %s\n' "$boot_error_reason"
+# Leave onekvm-boot-error/try-N/ and try-N.zip on the boot FAT.
+# Never read firstboot.txt.
+nanokvm_boot_error_reason_file() {
+    boot_error_record=$1
+    boot_error_text=$2
+    boot_error_try=$3
+    boot_error_packed=$4
+    {
+        if [ "$boot_error_packed" = zip ]; then
+            case ${splash_language:-en} in
+                zh) printf '安装已暂停。原因写在下面。这次记录在 SD 卡 onekvm-boot-error/%s 文件夹，并打包为 %s.zip。\n' "$boot_error_try" "$boot_error_try" ;;
+                zh_tw) printf '安裝已暫停。原因寫在下面。這次記錄在 SD 卡 onekvm-boot-error/%s 資料夾，並打包為 %s.zip。\n' "$boot_error_try" "$boot_error_try" ;;
+                *) printf 'Setup paused. The reason is below. This record is the onekvm-boot-error/%s folder on the SD card, and is also packed as %s.zip.\n' "$boot_error_try" "$boot_error_try" ;;
+            esac
+        else
+            case ${splash_language:-en} in
+                zh) printf '安装已暂停。原因写在下面。这次记录在 SD 卡 onekvm-boot-error/%s 文件夹。\n' "$boot_error_try" ;;
+                zh_tw) printf '安裝已暫停。原因寫在下面。這次記錄在 SD 卡 onekvm-boot-error/%s 資料夾。\n' "$boot_error_try" ;;
+                *) printf 'Setup paused. The reason is below. This record is the onekvm-boot-error/%s folder on the SD card.\n' "$boot_error_try" ;;
+            esac
+        fi
+        printf '\nreason: %s\n' "$boot_error_text"
+    } >"$boot_error_record/reason.txt"
+}
+
+nanokvm_write_boot_error_files() {
+    boot_error_record=$1
+    boot_error_text=$2
+    boot_error_try=$3
+    nanokvm_boot_error_reason_file "$boot_error_record" "$boot_error_text" "$boot_error_try" files || return 1
     if [ -r "${ONEKVM_CMDLINE_FILE:-/proc/cmdline}" ]; then
-        printf 'cmdline: %s\n' "$(cat "${ONEKVM_CMDLINE_FILE:-/proc/cmdline}")"
+        cat "${ONEKVM_CMDLINE_FILE:-/proc/cmdline}" >"$boot_error_record/cmdline.txt" || return 1
+    else
+        : >"$boot_error_record/cmdline.txt" || return 1
     fi
-    printf 'media: %s\nslot: %s\ndisk: %s\nloader: %s\n' \
-        "${storage_media:-}" "${storage_slot:-}" "${disk:-}" "${loader:-}"
-    boot_error_sysfs=${ONEKVM_STORAGE_SYSFS:-/sys/class/block}
-    if [ -n "${disk_name:-}" ] && [ -d "$boot_error_sysfs/$disk_name" ]; then
-        printf 'disk-size: %s\n' "$(cat "$boot_error_sysfs/$disk_name/size" 2>/dev/null || printf unknown)"
-        for boot_error_part in "$boot_error_sysfs/$disk_name"p*; do
-            [ -d "$boot_error_part" ] || continue
-            printf 'partition: %s start=%s size=%s\n' \
-                "${boot_error_part##*/}" \
-                "$(cat "$boot_error_part/start" 2>/dev/null || printf -)" \
-                "$(cat "$boot_error_part/size" 2>/dev/null || printf -)"
-        done
-    fi
+    {
+        printf 'media: %s\nslot: %s\ndisk: %s\nloader: %s\n' \
+            "${storage_media:-}" "${storage_slot:-}" "${disk:-}" "${loader:-}"
+        boot_error_sysfs=${ONEKVM_STORAGE_SYSFS:-/sys/class/block}
+        if [ -n "${disk_name:-}" ] && [ -d "$boot_error_sysfs/$disk_name" ]; then
+            printf 'disk-size: %s\n' "$(cat "$boot_error_sysfs/$disk_name/size" 2>/dev/null || printf unknown)"
+            for boot_error_part in "$boot_error_sysfs/$disk_name"p*; do
+                [ -d "$boot_error_part" ] || continue
+                printf 'partition: %s start=%s size=%s\n' \
+                    "${boot_error_part##*/}" \
+                    "$(cat "$boot_error_part/start" 2>/dev/null || printf -)" \
+                    "$(cat "$boot_error_part/size" 2>/dev/null || printf -)"
+            done
+        fi
+    } >"$boot_error_record/storage.txt" || return 1
     if [ -r /proc/self/mountinfo ]; then
-        printf '\nmounts:\n'
-        awk 'NR<=80 { print }' /proc/self/mountinfo
+        awk 'NR<=80 { print }' /proc/self/mountinfo >"$boot_error_record/mounts.txt" || return 1
+    else
+        : >"$boot_error_record/mounts.txt" || return 1
     fi
     if command -v dmesg >/dev/null 2>&1; then
-        printf '\ndmesg:\n'
-        dmesg 2>/dev/null | tail -n 80 || true
+        dmesg 2>/dev/null | tail -n 80 >"$boot_error_record/dmesg.txt" || true
     fi
+    [ -f "$boot_error_record/dmesg.txt" ] || : >"$boot_error_record/dmesg.txt"
+}
+
+nanokvm_pack_boot_error() {
+    boot_error_record=$1
+    boot_error_zip=$2
+    command -v onekvm-boot-error-zip >/dev/null 2>&1 || return 1
+    boot_error_zip_tmp=$boot_error_zip.tmp
+    rm -f "$boot_error_zip_tmp" || return 1
+    onekvm-boot-error-zip "$boot_error_zip_tmp" \
+        "$boot_error_record/reason.txt" \
+        "$boot_error_record/cmdline.txt" \
+        "$boot_error_record/storage.txt" \
+        "$boot_error_record/mounts.txt" \
+        "$boot_error_record/dmesg.txt" || {
+        rm -f "$boot_error_zip_tmp"
+        return 1
+    }
+    mv "$boot_error_zip_tmp" "$boot_error_zip" || {
+        rm -f "$boot_error_zip_tmp"
+        return 1
+    }
 }
 
 nanokvm_write_boot_error() {
@@ -65,8 +111,16 @@ nanokvm_write_boot_error() {
     mkdir -p "$boot_error_dir" || return 1
     boot_error_next=1
     for boot_error_existing in "$boot_error_dir"/try-*; do
-        [ -f "$boot_error_existing" ] || continue
-        boot_error_number=${boot_error_existing##*/try-}
+        [ -e "$boot_error_existing" ] || continue
+        boot_error_base=${boot_error_existing##*/}
+        case "$boot_error_base" in
+            try-*.zip)
+                boot_error_number=${boot_error_base#try-}
+                boot_error_number=${boot_error_number%.zip}
+                ;;
+            try-*) boot_error_number=${boot_error_base#try-} ;;
+            *) continue ;;
+        esac
         case "$boot_error_number" in
             ''|*[!0-9]*|0*) continue ;;
         esac
@@ -75,17 +129,30 @@ nanokvm_write_boot_error() {
         fi
     done
     boot_error_try=try-$boot_error_next
-    boot_error_tmp=$boot_error_dir/.tmp
-    rm -f "$boot_error_tmp" || return 1
-    if ! nanokvm_boot_error_report "$2" "$boot_error_try" >"$boot_error_tmp"; then
-        rm -f "$boot_error_tmp"
+    boot_error_record=$boot_error_dir/.$boot_error_try
+    rm -rf "$boot_error_record"
+    mkdir "$boot_error_record" || return 1
+    if ! nanokvm_write_boot_error_files "$boot_error_record" "$2" "$boot_error_try"; then
+        rm -rf "$boot_error_record"
         return 1
     fi
-    mv "$boot_error_tmp" "$boot_error_dir/$boot_error_try" || {
-        rm -f "$boot_error_tmp"
+    if [ -e "$boot_error_dir/$boot_error_try" ]; then
+        rm -rf "$boot_error_record"
+        return 1
+    fi
+    mv "$boot_error_record" "$boot_error_dir/$boot_error_try" || {
+        rm -rf "$boot_error_record"
         return 1
     }
-    sync -f "$boot_error_dir/$boot_error_try" 2>/dev/null || sync || true
+    boot_error_record=$boot_error_dir/$boot_error_try
+    if nanokvm_boot_error_reason_file "$boot_error_record" "$2" "$boot_error_try" zip &&
+        nanokvm_pack_boot_error "$boot_error_record" "$boot_error_dir/$boot_error_try.zip"; then
+        :
+    else
+        nanokvm_boot_error_reason_file "$boot_error_record" "$2" "$boot_error_try" files || true
+        rm -f "$boot_error_dir/$boot_error_try.zip" "$boot_error_dir/$boot_error_try.zip.tmp"
+    fi
+    sync -f "$boot_error_record/reason.txt" 2>/dev/null || sync || true
     return 0
 }
 
