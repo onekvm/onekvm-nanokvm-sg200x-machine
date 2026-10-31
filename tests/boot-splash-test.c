@@ -28,6 +28,61 @@ static void check_rotation(size_t stride)
     free(pixels);
 }
 
+static void check_error_message(void)
+{
+    uint16_t plain[WIDTH * HEIGHT], text[WIDTH * HEIGHT];
+    const char *message = "OneKVM NanoKVM storage migration: rootfs A is not SquashFS; refusing initialization";
+    render(plain, 0, 2, &labels_en, NULL);
+    render(text, 0, 2, &labels_en, message);
+    assert(memcmp(plain, text, sizeof(plain)) != 0);
+    unsigned header_pixels = 0;
+    for (unsigned y = 0; y < 42; y++)
+        for (unsigned x = 0; x < WIDTH; x++)
+            if (text[y * WIDTH + x] != rgb565(8, 11, 17))
+                header_pixels++;
+    assert(header_pixels > 100);
+
+    /* Long and nonprintable messages must stay inside the header. */
+    uint16_t bounded[WIDTH * HEIGHT + 2];
+    char long_message[1024];
+    memset(long_message, 'W', sizeof(long_message) - 1);
+    long_message[0] = '\t';
+    long_message[1] = (char)0xff;
+    long_message[sizeof(long_message) - 1] = '\0';
+    for (unsigned i = 0; i < WIDTH * HEIGHT + 2; i++)
+        bounded[i] = 0x1234;
+    draw_log_message(bounded + 1, long_message);
+    assert(bounded[0] == 0x1234 && bounded[WIDTH * HEIGHT + 1] == 0x1234);
+    unsigned last_row_pixels = 0;
+    for (unsigned y = 0; y < HEIGHT; y++) {
+        for (unsigned x = 0; x < WIDTH; x++) {
+            uint16_t pixel = bounded[1 + y * WIDTH + x];
+            if (y < 6 || y >= 41 || x < 12 || x >= 306)
+                assert(pixel == 0x1234);
+            if (y >= 30 && y < 41 && pixel != 0x1234)
+                last_row_pixels++;
+        }
+    }
+    assert(last_row_pixels > 0);
+
+    /* Boot/install layouts ignore error text, and empty text keeps old layout. */
+    render(plain, 0, 0, &labels_en, NULL);
+    render(text, 0, 0, &labels_en, message);
+    assert(!memcmp(plain, text, sizeof(plain)));
+    render(plain, 0, 2, &labels_en, NULL);
+    render(text, 0, 2, &labels_en, "");
+    assert(!memcmp(plain, text, sizeof(plain)));
+
+    char output[] = "/tmp/onekvm-splash-message-XXXXXX";
+    int fd = mkstemp(output);
+    assert(fd >= 0);
+    close(fd);
+    char *argv[] = { "splash", "--message", (char *)message,
+                     "--language", "zh", "--output", output, "error-saved", NULL };
+    assert(splash_cli_main(8, argv) == 0);
+    unlink(output);
+}
+
 int main(void)
 {
     struct fb_var_screeninfo var = {
@@ -62,25 +117,26 @@ int main(void)
         assert(language_labels("zh-TW") == language_labels("zh_tw"));
         assert(language_labels("unknown") == &labels_en);
         for (unsigned stage = 0; stage <= 7; stage++) {
-            render(en, stage, 0, &labels_en);
-            render(zh, stage, 0, &labels_zh);
-            render(tw, stage, 0, &labels_zh_tw);
+            render(en, stage, 0, &labels_en, NULL);
+            render(zh, stage, 0, &labels_zh, NULL);
+            render(tw, stage, 0, &labels_zh_tw, NULL);
             assert(memcmp(en, zh, sizeof(en)) != 0);
             assert(memcmp(en, tw, sizeof(en)) != 0);
         }
-        render(en, 0, 1, &labels_en);
-        render(zh, 0, 1, &labels_zh);
+        render(en, 0, 1, &labels_en, NULL);
+        render(zh, 0, 1, &labels_zh, NULL);
         assert(memcmp(en, zh, sizeof(en)) != 0);
         {
             uint16_t saved_en[WIDTH * HEIGHT], saved_zh[WIDTH * HEIGHT];
-            render(saved_en, 0, 2, &labels_en);
-            render(saved_zh, 0, 2, &labels_zh);
+            render(saved_en, 0, 2, &labels_en, NULL);
+            render(saved_zh, 0, 2, &labels_zh, NULL);
             assert(memcmp(en, saved_en, sizeof(en)) != 0);
             assert(memcmp(saved_en, saved_zh, sizeof(saved_en)) != 0);
         }
     }
     check_rotation(344);
     check_rotation(360);
+    check_error_message();
     puts("boot splash pixel format, rotation and stride tests passed");
     return 0;
 }

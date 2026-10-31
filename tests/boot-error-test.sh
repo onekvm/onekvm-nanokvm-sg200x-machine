@@ -30,7 +30,12 @@ for needle in needles:
 PY
 }
 fatal() { printf '%s\n' "$*" >"$work/fatal"; exit 7; }
-nanokvm_splash() { printf '%s\n' "$*" >"$work/splash"; }
+nanokvm_splash() {
+    [ "$1" = --message ]
+    printf '%s\n' "$2" >"$work/splash-message"
+    shift 2
+    printf '%s\n' "$*" >"$work/splash"
+}
 secret=onekvm-secret-not-for-the-card
 export secret
 printf 'set auth user test password %s\n' "$secret" >"$work/firstboot.txt"
@@ -54,6 +59,7 @@ if (nanokvm_die "userdata contains ext4; refusing destructive migration"); then
 fi
 [ "$(cat "$work/splash")" = error-saved ]
 [ "$(cat "$work/fatal")" = "OneKVM NanoKVM storage migration: userdata contains ext4; refusing destructive migration" ]
+cmp "$work/fatal" "$work/splash-message"
 records=$work/boot/onekvm-boot-error
 check_zip "$records/try-1.zip" \
     '这次记录是 SD 卡 onekvm-boot-error/try-1.zip' \
@@ -107,6 +113,7 @@ if (nanokvm_die "diagnostic folder rename failed"); then
     exit 1
 fi
 [ "$(cat "$work/splash")" = error ]
+cmp "$work/fatal" "$work/splash-message"
 [ ! -e "$records/try-12" ]
 [ ! -e "$records/try-12.zip" ]
 grep -q 'reason: diagnostic folder rename failed' "$records/.try-12/reason.txt"

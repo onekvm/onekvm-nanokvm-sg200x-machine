@@ -10,9 +10,9 @@ nanokvm_die() {
     # The record is best-effort. A save failure must still reach fatal.
     nanokvm_save_boot_error "$1" || true
     if [ "${nanokvm_boot_error_saved:-false}" = true ]; then
-        nanokvm_splash error-saved
+        nanokvm_splash --message "OneKVM NanoKVM storage migration: $1" error-saved
     else
-        nanokvm_splash error
+        nanokvm_splash --message "OneKVM NanoKVM storage migration: $1" error
     fi
     fatal "OneKVM NanoKVM storage migration: $1"
 }

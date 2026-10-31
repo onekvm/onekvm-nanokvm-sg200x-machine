@@ -24,6 +24,7 @@ struct splash_labels {
 };
 
 #include "assets.h"
+#include "log-font.h"
 
 static const struct splash_labels *language_labels(const char *language)
 {
@@ -63,16 +64,57 @@ static void draw_bar(uint16_t *frame, unsigned width, uint16_t color)
     }
 }
 
+static void draw_log_message(uint16_t *frame, const char *message)
+{
+    enum { LEFT = 12, TOP = 6, COLUMNS = (WIDTH - 2 * LEFT) / LOG_FONT_WIDTH, ROWS = 3 };
+    char text[COLUMNS * ROWS];
+    size_t length = 0, offset = 0;
+    while (message[length] && length < sizeof(text)) {
+        unsigned char c = (unsigned char)message[length];
+        text[length++] = c >= 32 && c <= 126 ? (char)c : (c < 32 ? ' ' : '?');
+    }
+    for (unsigned row = 0; row < ROWS && offset < length; row++) {
+        size_t count = length - offset;
+        int shortened = row == ROWS - 1 && (count > COLUMNS || message[length]);
+        if (count > COLUMNS)
+            count = COLUMNS;
+        if (row < ROWS - 1 && offset + count < length) {
+            size_t word_end = count;
+            while (word_end && text[offset + word_end] != ' ')
+                word_end--;
+            if (word_end)
+                count = word_end;
+        }
+        for (size_t col = 0; col < count; col++) {
+            unsigned char c = shortened && col + 3 >= count ? '.' : (unsigned char)text[offset + col];
+            for (unsigned y = 0; y < LOG_FONT_HEIGHT; y++) {
+                for (unsigned x = 0; x < LOG_FONT_WIDTH; x++) {
+                    if (log_font[c - 32][y] & (1u << x))
+                        frame[(TOP + row * (LOG_FONT_HEIGHT + 1) + y) * WIDTH +
+                              LEFT + col * LOG_FONT_WIDTH + x] = rgb565(234, 238, 245);
+                }
+            }
+        }
+        offset += count;
+        while (offset < length && text[offset] == ' ')
+            offset++;
+    }
+}
+
 /* Storage stages advance the bar; it is not a time estimate. */
-static void render(uint16_t *frame, unsigned stage, int failed, const struct splash_labels *labels)
+static void render(uint16_t *frame, unsigned stage, int failed,
+                   const struct splash_labels *labels, const char *message)
 {
 
     for (unsigned i = 0; i < WIDTH * HEIGHT; i++)
         frame[i] = rgb565(8, 11, 17);
     if (failed) {
-        draw_asset(frame, &logo_install, 23);
-        draw_asset(frame, labels->paused, 86);
-        draw_asset(frame, failed > 1 ? labels->saved_detail : labels->error_detail, 114);
+        unsigned shift = message && *message ? 28 : 0;
+        if (shift)
+            draw_log_message(frame, message);
+        draw_asset(frame, &logo_install, 23 + shift);
+        draw_asset(frame, labels->paused, 86 + shift);
+        draw_asset(frame, failed > 1 ? labels->saved_detail : labels->error_detail, 114 + shift);
     } else if (stage) {
         draw_asset(frame, &logo_install, 23);
         draw_asset(frame, labels->installing, 84);
@@ -191,23 +233,22 @@ failed:
 int main(int argc, char **argv)
 {
     uint16_t frame[WIDTH * HEIGHT];
-    const char *preview = NULL, *device = "/dev/fb0";
+    const char *preview = NULL, *device = "/dev/fb0", *message = NULL;
     unsigned stage = 0;
     int failed = 0;
     const struct splash_labels *labels = &labels_en;
 
-    while (argc >= 3 && !strcmp(argv[1], "--language")) {
-        labels = language_labels(argv[2]);
-        argc -= 2;
-        argv += 2;
-    }
-
-    if (argc >= 3 && !strcmp(argv[1], "--output")) {
-        preview = argv[2];
-        argc -= 2;
-        argv += 2;
-    } else if (argc >= 3 && !strcmp(argv[1], "--framebuffer")) {
-        device = argv[2];
+    while (argc >= 3) {
+        if (!strcmp(argv[1], "--language"))
+            labels = language_labels(argv[2]);
+        else if (!strcmp(argv[1], "--message"))
+            message = argv[2];
+        else if (!strcmp(argv[1], "--output"))
+            preview = argv[2];
+        else if (!strcmp(argv[1], "--framebuffer"))
+            device = argv[2];
+        else
+            break;
         argc -= 2;
         argv += 2;
     }
@@ -221,11 +262,11 @@ int main(int argc, char **argv)
                strlen(argv[2]) == 1 && argv[2][0] >= '1' && argv[2][0] <= '7') {
         stage = (unsigned)(argv[2][0] - '0');
     } else {
-        fprintf(stderr, "Usage: onekvm-boot-splash [--language en|zh|zh_tw] [--output FILE.ppm | "
+        fprintf(stderr, "Usage: onekvm-boot-splash [--language en|zh|zh_tw] [--message TEXT] [--output FILE.ppm | "
                 "--framebuffer /dev/fb0] {boot | install STAGE(1-7) | error | error-saved}\n");
         return 2;
     }
-    render(frame, stage, failed, labels);
+    render(frame, stage, failed, labels, message);
     if ((preview ? write_preview(preview, frame) : show_panel(device, frame)) < 0) {
         perror("onekvm-boot-splash");
         return 1;
