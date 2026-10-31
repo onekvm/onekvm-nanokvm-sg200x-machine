@@ -32,6 +32,17 @@ TEST_PARTITION='/dev/mmcblk0p2
 /dev/mmcblk2p2'
 printf '%s\n' 'root=PARTUUID=4f4b5650-02 rauc.slot=A' >"$ONEKVM_CMDLINE_FILE"
 if onekvm_storage_select; then echo 'ambiguous cards accepted' >&2; exit 1; fi
+[ -z "$disk$disk_name$loader$root_a$root_b$userdata" ]
+
+# A known boot disk remains available to save a rejected slot's error. A later
+# invalid selection must never reuse that device for diagnostic writes.
+unset TEST_PARTITION
+printf 'root=PARTUUID=4f4b5650-03 rauc.slot=A\n' >"$ONEKVM_CMDLINE_FILE"
+if onekvm_storage_select; then echo 'conflicting slot accepted' >&2; exit 1; fi
+[ "$disk:$loader" = /dev/mmcblk2:/dev/mmcblk2p1 ]
+printf 'root=/dev/sda2\n' >"$ONEKVM_CMDLINE_FILE"
+if onekvm_storage_select; then echo 'unknown root accepted' >&2; exit 1; fi
+[ -z "$disk$disk_name$loader$root_a$root_b$userdata" ]
 echo "boot medium selection tests passed"
 # Compact source offsets are distinct from the final installed layout.
 unset TEST_PARTITION

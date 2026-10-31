@@ -99,6 +99,23 @@ if grep -q '\.zip' "$work/boot/onekvm-boot-error/try-11/reason.txt"; then
     exit 1
 fi
 
+# A failed final rename must retain the staged reason and report save failure.
+PATH=/usr/bin:/bin
+mv() { return 1; }
+if (nanokvm_die "diagnostic folder rename failed"); then
+    echo 'failed diagnostic save continued' >&2
+    exit 1
+fi
+[ "$(cat "$work/splash")" = error ]
+[ ! -e "$records/try-12" ]
+[ ! -e "$records/try-12.zip" ]
+grep -q 'reason: diagnostic folder rename failed' "$records/.try-12/reason.txt"
+unset -f mv
+PATH=$saved_path
+nanokvm_write_boot_error "$work/boot" 'save after a failed diagnostic rename'
+check_zip "$records/try-13.zip" 'reason: save after a failed diagnostic rename'
+grep -q 'reason: diagnostic folder rename failed' "$records/.try-12/reason.txt"
+
 # A directory that cannot be written keeps the serial instruction.
 rm -rf "$work/boot"
 ONEKVM_BOOT_ERROR_DIR=$work/missing

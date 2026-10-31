@@ -43,6 +43,7 @@ onekvm_storage_carrier_geometry() {
 
 onekvm_storage_select() {
     storage_root=; storage_media=; storage_slot=; storage_geometry=
+    disk=; disk_name=; loader=; root_a=; root_b=; userdata=
     for storage_arg in $(cat "${ONEKVM_CMDLINE_FILE:-/proc/cmdline}"); do
         case "$storage_arg" in
             root=*) storage_root=${storage_arg#root=} ;;
@@ -76,12 +77,15 @@ onekvm_storage_select() {
             ;;
         *) onekvm_storage_error "unrecognized root device: $storage_root"; return 1 ;;
     esac
+    # Keep the positively identified boot volume available for diagnostics even
+    # when the slot arguments below prevent storage initialization.
+    disk_name=${disk##*/}
+    loader=${disk}p1
     case "$storage_root:$storage_slot" in
         PARTUUID=4f4b5650-02:A|PARTUUID=4f4b5650-03:B|PARTLABEL=pro-rootfs-a:A|PARTLABEL=pro-rootfs-b:B|/dev/mmcblk0p2:A|/dev/mmcblk0p3:B) ;;
         *) onekvm_storage_error "root device and boot slot disagree"; return 1 ;;
     esac
-    disk_name=${disk##*/}
-    loader=${disk}p1; root_a=${disk}p2; root_b=${disk}p3; userdata=${disk}p4
+    root_a=${disk}p2; root_b=${disk}p3; userdata=${disk}p4
     # Cube and both Pro media use the same 128 MiB SquashFS slot capacity.
     root_slot_size=262144
     root_b_gap=0

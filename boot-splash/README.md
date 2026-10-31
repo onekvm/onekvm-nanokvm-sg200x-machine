@@ -13,6 +13,11 @@ boot FAT accepts `onekvm-boot-error/try-1.zip`, or `try-1/` when packing fails, 
 Display failures never stop storage initialization or normal boot. Boards without the
 Desk framebuffer simply skip the artwork; Cube/PCIe retain their OLED module.
 
+Slot validation failures still save a record when the boot disk was identified.
+An absent or ambiguous boot disk is never guessed. Mount and write failures are
+reported on the serial console; the panel only shows `error-saved` after a record
+was published successfully. A failed folder rename preserves the staged files.
+
 The artwork uses the existing `onekvm-screen-display/src/init/logo.png`, copied
 here as `logo.png`. English captions are rasterized using DejaVu Sans.
 `generate-assets.py` requires Python/Pillow and regenerates the checked-in

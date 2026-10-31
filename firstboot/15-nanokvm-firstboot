@@ -111,9 +111,10 @@ nanokvm_write_boot_error() {
     boot_error_dir=$boot_error_dest/onekvm-boot-error
     mkdir -p "$boot_error_dir" || return 1
     boot_error_next=1
-    for boot_error_existing in "$boot_error_dir"/try-*; do
+    for boot_error_existing in "$boot_error_dir"/try-* "$boot_error_dir"/.try-*; do
         [ -e "$boot_error_existing" ] || continue
         boot_error_base=${boot_error_existing##*/}
+        boot_error_base=${boot_error_base#.}
         case "$boot_error_base" in
             try-*.zip)
                 boot_error_number=${boot_error_base#try-}
@@ -145,12 +146,12 @@ nanokvm_write_boot_error() {
         rm -rf "$boot_error_record"
         if [ -e "$boot_error_record" ]; then
             rm -f "$boot_error_dir/$boot_error_try.zip"
-            nanokvm_boot_error_publish_folder "$boot_error_record" "$boot_error_dir/$boot_error_try" "$2" "$boot_error_try"
+            nanokvm_boot_error_publish_folder "$boot_error_record" "$boot_error_dir/$boot_error_try" "$2" "$boot_error_try" || return 1
         else
-            sync -f "$boot_error_dir/$boot_error_try.zip" 2>/dev/null || sync || true
+            sync -f "$boot_error_dir/$boot_error_try.zip" 2>/dev/null || sync || return 1
         fi
     else
-        nanokvm_boot_error_publish_folder "$boot_error_record" "$boot_error_dir/$boot_error_try" "$2" "$boot_error_try"
+        nanokvm_boot_error_publish_folder "$boot_error_record" "$boot_error_dir/$boot_error_try" "$2" "$boot_error_try" || return 1
     fi
     return 0
 }
@@ -158,14 +159,13 @@ nanokvm_write_boot_error() {
 nanokvm_boot_error_publish_folder() {
     boot_error_record=$1
     boot_error_final=$2
-    nanokvm_boot_error_reason_file "$boot_error_record" "$3" "$4" files || true
-    rm -f "$boot_error_final.zip" "$boot_error_final.zip.tmp"
+    nanokvm_boot_error_reason_file "$boot_error_record" "$3" "$4" files || return 1
+    rm -f "$boot_error_final.zip" "$boot_error_final.zip.tmp" || return 1
     if [ -e "$boot_error_final" ]; then
-        rm -rf "$boot_error_record"
-        return 0
+        return 1
     fi
-    mv "$boot_error_record" "$boot_error_final" || rm -rf "$boot_error_record"
-    sync -f "$boot_error_final/reason.txt" 2>/dev/null || sync || true
+    mv "$boot_error_record" "$boot_error_final" || return 1
+    sync -f "$boot_error_final/reason.txt" 2>/dev/null || sync || return 1
     return 0
 }
 
@@ -173,30 +173,35 @@ nanokvm_boot_error_open() {
     boot_error_mount=
     boot_error_owned=false
     boot_error_was_ro=false
-    [ -b "${loader:-}" ] || return 1
+    [ -b "${loader:-}" ] || {
+        printf 'OneKVM: cannot save boot error: boot partition unavailable (%s)\n' "${loader:-unidentified}" >&2
+        return 1
+    }
     boot_error_name=${loader##*/}
     boot_error_sysfs=${ONEKVM_STORAGE_SYSFS:-/sys/class/block}
-    boot_error_dev=$(cat "$boot_error_sysfs/$boot_error_name/dev" 2>/dev/null) || return 1
+    boot_error_dev=$(cat "$boot_error_sysfs/$boot_error_name/dev") || return 1
+    boot_error_mounter=$(command -v mount) || return 1
     boot_error_mount=$(awk -v part="$boot_error_dev" '$3 == part { print $5; exit }' /proc/self/mountinfo 2>/dev/null || true)
     if [ -n "$boot_error_mount" ]; then
         boot_error_opts=$(awk -v part="$boot_error_dev" '$3 == part { print $6; exit }' /proc/self/mountinfo 2>/dev/null || true)
         case "$boot_error_opts" in
             ro|ro,*|*,ro|*,ro,*)
-                mount -o remount,rw -- "$boot_error_mount" 2>/dev/null || return 1
+                "$boot_error_mounter" -o remount,rw -- "$boot_error_mount" || return 1
                 boot_error_was_ro=true
                 ;;
         esac
         return 0
     fi
     boot_error_mount=${migration_dir:-/run}/onekvm-boot-error-mnt
-    mkdir -p "$boot_error_mount" 2>/dev/null || return 1
+    mkdir -p "$boot_error_mount" || return 1
     if command -v timeout >/dev/null 2>&1; then
-        timeout -k 2 5 mount -t vfat -o rw,nodev,nosuid,noexec -- "$loader" "$boot_error_mount" 2>/dev/null || {
+        # /init may know PATH without exporting it to timeout.
+        timeout -k 2 5 "$boot_error_mounter" -t vfat -o rw,nodev,nosuid,noexec -- "$loader" "$boot_error_mount" || {
             rmdir "$boot_error_mount" 2>/dev/null || true
             boot_error_mount=
             return 1
         }
-    elif ! mount -t vfat -o rw,nodev,nosuid,noexec -- "$loader" "$boot_error_mount" 2>/dev/null; then
+    elif ! "$boot_error_mounter" -t vfat -o rw,nodev,nosuid,noexec -- "$loader" "$boot_error_mount"; then
         rmdir "$boot_error_mount" 2>/dev/null || true
         boot_error_mount=
         return 1
@@ -222,6 +227,8 @@ nanokvm_save_boot_error() {
     if [ -n "${ONEKVM_BOOT_ERROR_DIR:-}" ]; then
         if nanokvm_write_boot_error "$ONEKVM_BOOT_ERROR_DIR" "$1"; then
             nanokvm_boot_error_saved=true
+        else
+            printf 'OneKVM: cannot save boot error in %s\n' "$ONEKVM_BOOT_ERROR_DIR" >&2
         fi
         return 0
     fi
@@ -230,7 +237,11 @@ nanokvm_save_boot_error() {
     if nanokvm_boot_error_open; then
         if nanokvm_write_boot_error "$boot_error_mount" "$1"; then
             nanokvm_boot_error_saved=true
+        else
+            printf 'OneKVM: cannot save boot error in %s\n' "$boot_error_mount" >&2
         fi
+    else
+        printf 'OneKVM: cannot open boot partition for error record\n' >&2
     fi
     nanokvm_boot_error_close || true
     return 0
