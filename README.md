@@ -214,3 +214,21 @@ validate it before selecting an SD or eMMC writer.
 Userspace lifecycle files are MIT licensed. The machine detector and early
 OLED kernel module are GPL-2.0-only. See [LICENSE](LICENSE) and
 [LICENSES/MIT.txt](LICENSES/MIT.txt).
+
+## Optional SDIO Wi-Fi
+
+The [official model matrix](https://wiki.sipeed.com/hardware/en/kvm/NanoKVM_PCIe/introduction.html)
+lists Wi-Fi as optional on PCIe and absent on Cube Lite/Full. Both SDIO and
+its `mmc-pwrseq-simple` node default to disabled in the shared DT. Before
+unflattening it, the kernel enables both only for a valid, READY C906L PCIe
+marker. Alpha retains its OLED I2C1 clock and ATX reset pin protection.
+Beta, Lite, missing markers and unknown variants leave SDIO disabled.
+
+The DT owns the six SD1 pad muxes, GPIOA26 mux/reset, power delays and the
+SD1 clock. Two exact pinctrl-single register windows expose only these seven pads,
+including to debugfs; reserved MMIO must never be mapped as additional pins. PCIe has
+no card-detect line and the module can be absent, so use `broken-cd` rather
+than `non-removable`. An empty mmc1 host is valid; mmc0 remains the storage
+card. The machine script only inspects physical devices under this SDIO
+host. It neither exports/drives GPIOA26 nor assumes a single SDIO vendor ID.
+Detecting a module does not establish driver or firmware support.

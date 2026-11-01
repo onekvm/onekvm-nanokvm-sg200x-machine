@@ -50,20 +50,15 @@ restore_sdio_pins() {
 }
 
 detect_wifi() {
-    # GPIOA26 is the optional Realtek SDIO module's enable line. The CVITEK
-    # 5.10 SDHCI driver cannot safely be unbound when no card is present, so
-    # rely on the non-removable host's boot-time enumeration and inspect the
-    # physical SDIO vendor ID without loading a Wi-Fi network driver.
-    devmem 0x0300104C 32 0x3 >/dev/null
-    set_gpio_high 506
-
+    # The board DT and mmc-pwrseq own module reset and enumeration. Do not
+    # export GPIOA26 or rescan/unbind a controller here. PCIe modules may use
+    # different SDIO vendor IDs; this host is dedicated to Wi-Fi.
     attempt=0
     while [ "$attempt" -lt 5 ]; do
         for candidate in /sys/bus/sdio/devices/*; do
             [ -e "$candidate/vendor" ] || continue
-            vendor=$(cat "$candidate/vendor")
-            case "$vendor" in
-                0x024c|024c) return 0 ;;
+            case "$(readlink -f "$candidate")" in
+                */4320000.wifi-sd/*) return 0 ;;
             esac
         done
         [ -e /sys/class/net/wlan0 ] && return 0
@@ -180,7 +175,7 @@ else
 fi
 fi
 
-if [ "$revision" != "alpha" ] && detect_wifi; then
+if [ "$revision" = "pcie" ] && detect_wifi; then
     wifi=true
 fi
 
