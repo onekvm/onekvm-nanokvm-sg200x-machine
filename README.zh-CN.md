@@ -167,3 +167,19 @@ OE 配方仍在 `onekvm-distro`，Pro 启动限制见
 用户空间生命周期文件使用 MIT 许可证；机器检测程序和 early OLED 内核模块
 使用 GPL-2.0-only。详见 [LICENSE](LICENSE) 和
 [LICENSES/MIT.txt](LICENSES/MIT.txt)。
+
+## 可选 SDIO Wi-Fi
+
+[官方型号对照](https://wiki.sipeed.com/hardware/en/kvm/NanoKVM_PCIe/introduction.html)
+列出的 Cube Lite/Full 不带 Wi-Fi，PCIe 可选配。共享设备树中的 SDIO 和
+`mmc-pwrseq-simple` 默认 disabled；内核在展开设备树前仅凭有效且 READY 的
+C906L PCIe 标记启用二者。Alpha 继续保留 OLED I2C1 时钟及 ATX reset 引脚保护；
+Beta、Lite 和缺失／未知标记不探测 SDIO。
+
+设备树通过 pinctrl-single 管理六根 SD1 引脚及 GPIOA26 复位线的复用，
+通过两个准确的寄存器区间只映射这七根引脚，调试接口也不访问保留区；
+同时负责复位、上电延时和 SD1 时钟。模块没有
+卡检测线且允许未安装，因此使用 `broken-cd`，不能声明 `non-removable`。
+无模块时允许存在空的 mmc1 主机；存储卡仍为 mmc0。板型检测脚本只检查该
+SDIO 主机下的实际设备，不再导出、驱动 GPIOA26，也不按单一厂商 ID 判断
+模块是否存在。模块被检测到不代表对应无线驱动和固件已支持。
