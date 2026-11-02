@@ -1,0 +1,102 @@
+#!/bin/sh
+# SD-resident kernel/initramfs; Wi-Fi is established before mounting NFS.
+export PATH=/sbin:/bin:/usr/sbin:/usr/bin
+mount -t devtmpfs devtmpfs /dev
+exec </dev/console >/dev/console 2>&1
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t tmpfs -o mode=0755,nodev,nosuid tmpfs /run
+mkdir -p /run/onekvm /newroot /boot-config
+
+fail() {
+    echo "OneKVM Go: $*; waiting for hardware watchdog reset"
+    # Stop the feeder without magic-closing the hardware watchdog.
+    kill -KILL "$watchdog_pid" 2>/dev/null || :
+    while :; do sleep 10; done
+}
+
+/usr/libexec/onekvm/onekvm-go-watchdog --boot &
+watchdog_pid=$!
+attempt=0
+until [ -s /run/onekvm/boot-watchdog.pid ]; do
+    kill -0 "$watchdog_pid" 2>/dev/null || {
+        echo 'OneKVM Go: watchdog could not be armed; refusing unattended boot'
+        while :; do sleep 10; done
+    }
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 10 ] || fail 'watchdog startup timed out'
+    sleep 1
+done
+
+attempt=0
+until [ -b /dev/mmcblk1p1 ]; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 20 ] || fail 'SD boot partition not found'
+    sleep 1
+done
+mount -t vfat -o ro /dev/mmcblk1p1 /boot-config || fail 'cannot read SD boot configuration'
+
+# Data files, never source shell code from the FAT partition. Secrets stay on SD.
+if [ -s /boot-config/onekvm/nfs-root ]; then
+    IFS= read -r nfs_root </boot-config/onekvm/nfs-root
+    case "$nfs_root" in
+        *:/*) ;;
+        *) fail 'nfs-root must be an IPv4 server:/absolute/export path' ;;
+    esac
+    [ -s /boot-config/onekvm/wpa_supplicant.conf ] || fail 'Wi-Fi configuration missing'
+    umask 077
+    cp /boot-config/onekvm/wpa_supplicant.conf /run/onekvm/wpa_supplicant.conf
+    mkdir -p /run/wpa_supplicant
+    modprobe aic8800_bsp || fail 'AIC8800 BSP failed'
+    modprobe aic8800_fdrv || fail 'AIC8800 Wi-Fi driver failed'
+    attempt=0
+    until [ -e /sys/class/net/wlan0 ]; do
+        attempt=$((attempt + 1))
+        [ "$attempt" -lt 20 ] || fail 'wlan0 not found'
+        sleep 1
+    done
+    ip link set wlan0 up || fail 'cannot enable wlan0'
+    wpa_supplicant -B -D nl80211 -i wlan0 -c /run/onekvm/wpa_supplicant.conf \
+        -P /run/onekvm/nfs-wpa.pid -C /run/wpa_supplicant || fail 'supplicant failed'
+    attempt=0
+    until wpa_cli -i wlan0 status | grep -q '^wpa_state=COMPLETED$'; do
+        attempt=$((attempt + 1))
+        [ "$attempt" -lt 45 ] || fail 'Wi-Fi association timed out'
+        sleep 1
+    done
+    # The helper installs address, routes and DNS. No unbounded DHCP retry.
+    udhcpc -i wlan0 -n -q -t 5 -T 3 -s /usr/libexec/onekvm/go-udhcpc \
+        || fail 'DHCP failed'
+    echo "OneKVM Go: mounting NFS root $nfs_root"
+    # Userspace timeout terminates mount; a stuck kernel operation is covered by WDT.
+    timeout -s KILL 30 mount -t nfs -o vers=3,tcp,nolock,hard,timeo=30,retrans=2 \
+        "$nfs_root" /newroot || fail 'NFS mount failed'
+    touch /run/onekvm/nfs-wifi
+    rm -f /newroot/etc/resolv.conf
+    ln -s /run/onekvm/resolv.conf /newroot/etc/resolv.conf || fail 'cannot install NFS DNS'
+    mkdir -p /run/systemd/network /run/systemd/system
+    printf '[Match]\nName=wlan0\n[Link]\nUnmanaged=yes\n' >/run/systemd/network/00-onekvm-nfs.network
+    ln -s /dev/null /run/systemd/system/wpa_supplicant@wlan0.service
+    ln -s /dev/null /run/systemd/system/wpa_supplicant.service
+    # Keep supplicant alive across switch_root, with its config/control socket in /run.
+    # It needs no files from the former initramfs once connected.
+else
+    mount -t ext4 -o rw /dev/mmcblk1p2 /newroot || fail 'SD root mount failed'
+fi
+[ -x /newroot/sbin/init ] || fail 'root has no init'
+umount /boot-config
+for dir in dev proc sys run; do
+    mkdir -p "/newroot/$dir"
+    mount --move "/$dir" "/newroot/$dir" || fail "cannot move $dir"
+done
+# Move the feeder's root before switch_root deletes the old initramfs.
+kill -USR1 "$watchdog_pid"
+attempt=0
+until [ -e /newroot/run/onekvm/boot-watchdog.ready ]; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 10 ] || fail 'watchdog root handoff failed'
+    sleep 1
+done
+echo 'OneKVM Go: switching root; hardware watchdog remains armed'
+exec switch_root /newroot /sbin/init
+fail 'switch_root failed'

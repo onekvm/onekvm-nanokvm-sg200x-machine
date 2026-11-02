@@ -1,0 +1,3 @@
+SUBSYSTEM=="video4linux", ATTR{name}=="*VIN*", SYMLINK+="onekvm-vin"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Hynitron*", SYMLINK+="input/onekvm-touch"
+SUBSYSTEM=="backlight", KERNEL=="panel-backlight", GROUP="onekvm-extension", MODE="0660"

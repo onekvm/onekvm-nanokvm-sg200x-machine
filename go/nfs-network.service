@@ -1,0 +1,14 @@
+[Unit]
+Description=Renew the initramfs Wi-Fi NFS lease
+ConditionPathExists=/run/onekvm/nfs-wifi
+After=network-pre.target
+Before=network.target
+
+[Service]
+Type=simple
+ExecStart=/sbin/udhcpc -f -i wlan0 -t 5 -T 3 -s /usr/libexec/onekvm/go-udhcpc
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

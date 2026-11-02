@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+case "$1" in
+    bound|renew)
+        # BusyBox emits the prefix mask as subnet; ip accepts dotted masks.
+        ip addr replace "$ip/${subnet:-255.255.255.0}" dev "$interface"
+        for gateway in ${router:-}; do
+            ip route replace default via "$gateway" dev "$interface"
+            break
+        done
+        : >/run/onekvm/resolv.conf
+        for server in ${dns:-}; do
+            printf 'nameserver %s\n' "$server" >>/run/onekvm/resolv.conf
+        done
+        # Preserve the lease for the rootfs DHCP client to renew after handoff.
+        printf '%s\n' "${lease:-3600}" >/run/onekvm/nfs-dhcp-lease
+        ;;
+esac

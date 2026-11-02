@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+pidfile=/run/onekvm/boot-watchdog.pid
+[ -s "$pidfile" ] || exit 0
+IFS= read -r pid <"$pidfile"
+case "$pid" in ''|*[!0-9]*) exit 1 ;; esac
+kill -USR2 "$pid"
+for attempt in 1 2 3 4 5; do
+    [ -e "$pidfile" ] || exit 0
+    sleep 1
+done
+echo 'Go boot watchdog did not release ownership' >&2
+exit 1

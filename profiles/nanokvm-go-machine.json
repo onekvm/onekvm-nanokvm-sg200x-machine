@@ -1,0 +1,26 @@
+{
+  "machine": "nanokvm-go",
+  "vendor": "Sipeed",
+  "name": "NanoKVM Go",
+  "processor": "2x ARM Cortex-A53",
+  "soc_name": "AX620Q",
+  "memory_type": "LPDDR4X",
+  "video_auto_bitrate_max_kbps": 20000,
+  "detected": { "wifi": true },
+  "capabilities": { "audio": true, "recovery": false },
+  "defaults": {
+    "network.hostname": "onekvm-nanokvm-go",
+    "video.fps": "60",
+    "audio.device": "hw:UAC1Gadget,0",
+    "usb.vendor_id": "0x359f",
+    "usb.product_id": "0x3305"
+  },
+  "fixed": { "video.source_device": "/dev/video0" },
+  "screen_display": {
+    "keyboard": "grid",
+    "keyboard_layout": "nanokvm-go.json",
+    "rotate": 0,
+    "rotation_offset": 0,
+    "rotations": [0, 90, 180, 270]
+  }
+}
