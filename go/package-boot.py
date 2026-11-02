@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wrap OE-built ARM32 Image+initramfs/DTB for the unchanged Go SD loader."""
+"""Wrap OE-built Go Image+initramfs/DTB in bounded Axera SD capsules."""
 import argparse
 import hashlib
 import importlib.util
@@ -10,18 +10,19 @@ import subprocess
 import sys
 
 
-def package(sdk, source, output, raw_limit, compressed_limit):
+def package(sdk, source, output, raw_limit, compressed_limit, compress=True):
     source = source.resolve()
     raw = source.read_bytes()
     if not raw or len(raw) > raw_limit:
         raise ValueError("image exceeds the Go boot memory window")
     binary = output.with_suffix(".bin")
     binary.write_bytes(raw)
-    subprocess.run([str(sdk / "tools/ax_gzip_tool/ax_gzip"), "-9", str(binary)], check=True)
-    compressed = binary.with_name(binary.stem + "_axgzip.bin")
+    if compress:
+        subprocess.run([str(sdk / "tools/ax_gzip_tool/ax_gzip"), "-9", str(binary)], check=True)
+    compressed = binary.with_name(binary.stem + "_axgzip.bin") if compress else binary
     data = compressed.read_bytes()
     compressed.write_bytes(data + bytes(-len(data) % 4))
-    if compressed.stat().st_size > compressed_limit:
+    if compressed.stat().st_size + 1024 > compressed_limit:
         raise ValueError("compressed image exceeds the Go boot memory window")
     sys.path.insert(0, str(sdk / "tools/imgsign"))
     spec = importlib.util.spec_from_file_location("ax_image_signer", sdk / "build/tools/imgsign/sec_boot_AX620E_sign.py")
@@ -45,21 +46,29 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ("sdk", "kernel", "dtb", "out"):
         p.add_argument("--" + name, type=Path, required=True)
+    p.add_argument("--arch", choices=("arm32", "arm64"), default="arm64")
     a = p.parse_args()
     a.out.mkdir(parents=True, exist_ok=True)
     kernel = a.kernel.read_bytes()
     if len(kernel) >= 40 and struct.unpack_from("<I", kernel, 36)[0] == 0x016f2818:
         raise ValueError("Go sd_boot needs raw ARM Image, not zImage")
+    if a.arch == "arm64":
+        if len(kernel) < 64 or kernel[56:60] != b"ARM\x64":
+            raise ValueError("Go ARM64 requires an AArch64 Image header")
+        offset, size, flags = struct.unpack_from("<3Q", kernel, 8)
+        if (not flags & 8 or offset > 0x40200000 or (0x40200000 - offset) % (2 * 1024 * 1024)
+                or size < len(kernel) or size > 46 * 1024 * 1024):
+            raise ValueError("AArch64 Image would overlap BL31/DTB after booti")
     if a.dtb.read_bytes()[:4] != bytes.fromhex("d00dfeed"):
         raise ValueError("invalid DTB")
-    # Factory ARM32 loader: Image 0x40008000, DTB 0x42008000.
-    # Compressed DTB/kernel sit at UBOOT_IMG_HEADER_BASE + 4/5 MiB,
-    # with SD staging at +45 MiB. Keep all four regions disjoint.
+    # ARM64 Image: 0x40200000..0x43000000, DTB: 0x43000000..0x43100000.
+    # Capsule limits include their 1 KiB headers. Keep 64 KiB for FDT fixups.
     mib = 1024 * 1024
     manifest = {name: package(a.sdk.resolve(), src, a.out / name, raw_limit, compressed_limit)
                 for name, src, raw_limit, compressed_limit in (
-                    ("kernel.img", a.kernel, 32 * mib, 40 * mib),
-                    ("dtb.img", a.dtb, mib, mib))}
+                    ("kernel.img", a.kernel, (46 if a.arch == "arm64" else 32) * mib, 40 * mib),
+                    ("dtb.img", a.dtb, mib - 65536, mib))}
+    manifest["architecture"] = a.arch
     (a.out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
 
