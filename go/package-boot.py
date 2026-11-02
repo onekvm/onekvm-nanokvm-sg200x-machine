@@ -10,10 +10,10 @@ import subprocess
 import sys
 
 
-def package(sdk, source, output):
+def package(sdk, source, output, raw_limit, compressed_limit):
     source = source.resolve()
     raw = source.read_bytes()
-    if not raw or len(raw) > 48 * 1024 * 1024:
+    if not raw or len(raw) > raw_limit:
         raise ValueError("image exceeds the Go boot memory window")
     binary = output.with_suffix(".bin")
     binary.write_bytes(raw)
@@ -21,6 +21,8 @@ def package(sdk, source, output):
     compressed = binary.with_name(binary.stem + "_axgzip.bin")
     data = compressed.read_bytes()
     compressed.write_bytes(data + bytes(-len(data) % 4))
+    if compressed.stat().st_size > compressed_limit:
+        raise ValueError("compressed image exceeds the Go boot memory window")
     sys.path.insert(0, str(sdk / "tools/imgsign"))
     spec = importlib.util.spec_from_file_location("ax_image_signer", sdk / "build/tools/imgsign/sec_boot_AX620E_sign.py")
     signer = importlib.util.module_from_spec(spec)
@@ -50,8 +52,14 @@ def main():
         raise ValueError("Go sd_boot needs raw ARM Image, not zImage")
     if a.dtb.read_bytes()[:4] != bytes.fromhex("d00dfeed"):
         raise ValueError("invalid DTB")
-    manifest = {name: package(a.sdk.resolve(), src, a.out / name)
-                for name, src in (("kernel.img", a.kernel), ("dtb.img", a.dtb))}
+    # Factory ARM32 loader: Image 0x40008000, DTB 0x42008000.
+    # Compressed DTB/kernel sit at UBOOT_IMG_HEADER_BASE + 4/5 MiB,
+    # with SD staging at +45 MiB. Keep all four regions disjoint.
+    mib = 1024 * 1024
+    manifest = {name: package(a.sdk.resolve(), src, a.out / name, raw_limit, compressed_limit)
+                for name, src, raw_limit, compressed_limit in (
+                    ("kernel.img", a.kernel, 32 * mib, 40 * mib),
+                    ("dtb.img", a.dtb, mib, mib))}
     (a.out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
 
