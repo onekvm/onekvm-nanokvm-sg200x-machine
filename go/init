@@ -72,6 +72,7 @@ if [ -s /boot-config/onekvm/nfs-root ]; then
     timeout -s KILL 30 mount -t nfs -o vers=3,tcp,nolock,hard,timeo=30,retrans=2 \
         "$nfs_root" /newroot || fail 'NFS mount failed'
     touch /run/onekvm/nfs-wifi
+    printf 'dev\n' >/run/onekvm/boot-slot
     rm -f /newroot/etc/resolv.conf
     ln -s /run/onekvm/resolv.conf /newroot/etc/resolv.conf || fail 'cannot install NFS DNS'
     mkdir -p /run/systemd/network /run/systemd/system
@@ -82,6 +83,7 @@ if [ -s /boot-config/onekvm/nfs-root ]; then
     # It needs no files from the former initramfs once connected.
 else
     mount -t ext4 -o rw /dev/mmcblk1p2 /newroot || fail 'SD root mount failed'
+    printf 'A\n' >/run/onekvm/boot-slot
 fi
 [ -x /newroot/sbin/init ] || fail 'root has no init'
 umount /boot-config

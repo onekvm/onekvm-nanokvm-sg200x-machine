@@ -12,6 +12,7 @@
     "network.hostname": "onekvm-nanokvm-go",
     "video.fps": "60",
     "audio.device": "hw:UAC1Gadget,0",
+    "audio.source": "hdmi",
     "usb.vendor_id": "0x359f",
     "usb.product_id": "0x3305"
   },
