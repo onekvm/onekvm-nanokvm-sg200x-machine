@@ -37,6 +37,8 @@ int main(int argc, char **argv)
     fprintf(stderr, "OneKVM Go: hardware watchdog armed (%d s)\n", seconds);
     if (reset) {
         /* Keep the descriptor open and never feed it again. No reboot syscall. */
+        /* Flush writable SD/NFS data after arming; a hung sync is bounded by WDT. */
+        sync();
         for (;;) pause();
     }
     struct sigaction sa = { .sa_handler = signal_handler };
