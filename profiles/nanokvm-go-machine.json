@@ -4,7 +4,6 @@
   "name": "NanoKVM Go",
   "processor": "2x ARM Cortex-A53",
   "soc_name": "AX620Q",
-  "memory_type": "LPDDR4X",
   "video_auto_bitrate_max_kbps": 20000,
   "detected": { "wifi": true },
   "capabilities": { "audio": true, "recovery": false },
