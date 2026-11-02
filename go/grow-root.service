@@ -1,0 +1,14 @@
+[Unit]
+Description=Expand the NanoKVM Go SD root filesystem
+After=local-fs.target
+Before=onekvm-persistence.service
+ConditionPathExists=!/run/onekvm/nfs-wifi
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/onekvm/go-grow-root
+TimeoutStartSec=90s
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

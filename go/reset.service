@@ -5,6 +5,7 @@ After=onekvm-watchdog.service
 
 [Service]
 Type=simple
+ExecStartPre=/usr/libexec/onekvm/go-watchdog-handoff
 ExecStart=/usr/libexec/onekvm/onekvm-go-watchdog --reset
 TimeoutStopSec=2s
 Restart=no

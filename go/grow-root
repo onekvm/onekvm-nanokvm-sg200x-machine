@@ -1,0 +1,18 @@
+#!/bin/sh
+# Grow only the owned two-partition Go SD layout, never an NFS root.
+set -eu
+[ ! -e /run/onekvm/nfs-wifi ] || exit 0
+[ "$(cat /usr/share/onekvm/machine)" = nanokvm-go ] || exit 1
+root_device=$(findmnt -n -o SOURCE /)
+[ "$(readlink -f "$root_device")" = /dev/mmcblk1p2 ] || exit 1
+[ "$(cat /sys/class/block/mmcblk1p2/start)" = 264192 ] || exit 1
+disk_sectors=$(cat /sys/class/block/mmcblk1/size)
+root_sectors=$(cat /sys/class/block/mmcblk1p2/size)
+available=$((disk_sectors - 264192))
+if [ "$available" -gt "$root_sectors" ]; then
+    printf 'start=264192, size=%s, type=83\n' "$available" |
+        sfdisk --no-reread --force -N 2 /dev/mmcblk1
+    partx --update --nr 2 /dev/mmcblk1
+fi
+# Retry the filesystem resize even if a previous boot already grew the partition.
+resize2fs /dev/mmcblk1p2
