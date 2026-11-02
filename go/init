@@ -85,7 +85,8 @@ else
     mount -t ext4 -o rw /dev/mmcblk1p2 /newroot || fail 'SD root mount failed'
     printf 'A\n' >/run/onekvm/boot-slot
 fi
-[ -x /newroot/sbin/init ] || fail 'root has no init'
+# Resolve absolute /sbin/init symlinks inside the real root, not the initramfs.
+chroot /newroot /bin/sh -c 'test -x /sbin/init' || fail 'root has no init'
 umount /boot-config
 for dir in dev proc sys run; do
     mkdir -p "/newroot/$dir"
