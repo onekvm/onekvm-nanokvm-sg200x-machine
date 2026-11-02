@@ -47,6 +47,7 @@ if [ -s /boot-config/onekvm/nfs-root ]; then
     [ -s /boot-config/onekvm/wpa_supplicant.conf ] || fail 'Wi-Fi configuration missing'
     umask 077
     cp /boot-config/onekvm/wpa_supplicant.conf /run/onekvm/wpa_supplicant.conf
+    umask 022
     mkdir -p /run/wpa_supplicant
     modprobe aic8800_bsp || fail 'AIC8800 BSP failed'
     modprobe aic8800_fdrv || fail 'AIC8800 Wi-Fi driver failed'

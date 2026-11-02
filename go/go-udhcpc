@@ -12,6 +12,7 @@ case "$1" in
         for server in ${dns:-}; do
             printf 'nameserver %s\n' "$server" >>/run/onekvm/resolv.conf
         done
+        chmod 0644 /run/onekvm/resolv.conf
         # Preserve the lease for the rootfs DHCP client to renew after handoff.
         printf '%s\n' "${lease:-3600}" >/run/onekvm/nfs-dhcp-lease
         ;;
