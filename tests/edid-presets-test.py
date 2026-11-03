@@ -10,6 +10,7 @@ from edid_modes import RESOLUTIONS
 for pro in [False, True]:
     directory = root / 'share/edid' / ('pro' if pro else '')
     files = list(directory.glob('*.edid.bin'))
+    assert (directory / '1920x1080p90.edid.bin').is_file()
     assert not (directory / '1080p60-4k30.edid.bin').exists()
     for path in files:
         data = path.read_bytes()
@@ -33,9 +34,17 @@ for pro in [False, True]:
         vb = d[6] | (d[7] & 15) << 8
         hz = int.from_bytes(d[:2], 'little') * 10000 / ((w + hb) * (h + vb))
         assert (w, h) == (width, height), path
-        assert w % 2 == h % 2 == 0 and abs(hz - 60) < 1, (path, hz)
+        refresh = int(rest.split('p')[1].split('.')[0])
+        assert refresh in (60, 90), path
+        assert w % 2 == h % 2 == 0 and abs(hz - refresh) < 1, (path, hz)
         assert w <= (3840 if pro else 2880) and h <= (2160 if pro else 1620), path
-        assert int.from_bytes(d[:2], 'little') * 10 <= (297000 if pro else 165000), path
+        if refresh == 90:
+            assert (w, h) == (1920, 1080) and abs(hz - 90) < 0.001, (path, hz)
+            assert int.from_bytes(d[:2], 'little') * 10 == 222750, path
+            assert data[96] >= 90 and data[99] * 10000 >= 222750, path
+            assert data[132:136] == bytes((0x43, 16, 4, 1)), path
+        else:
+            assert int.from_bytes(d[:2], 'little') * 10 <= (297000 if pro else 165000), path
         assert (d[8] | ((d[11] >> 6) << 8)) + (d[9] | (((d[11] >> 4) & 3) << 8)) <= hb, path
         assert (d[10] >> 4 | (((d[11] >> 2) & 3) << 4)) + (d[10] & 15 | ((d[11] & 3) << 4)) <= vb, path
     if pro:

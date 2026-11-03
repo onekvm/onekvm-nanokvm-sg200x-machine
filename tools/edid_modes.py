@@ -1,4 +1,4 @@
-"""Common 60 Hz EDID modes, grouped by nominal display aspect ratio.
+"""Common EDID modes, grouped by nominal display aspect ratio.
 
 17:9 and 21:9 include the usual DCI and ultrawide marketing ratios. Timings
 use DMT/CTA where available, otherwise reduced blanking with a 25 MHz floor.
@@ -31,7 +31,11 @@ STANDARD = {
 }
 
 
-def mode_timing(width, height, aspect):
+def mode_timing(width, height, aspect, refresh=60):
+    if (width, height, refresh) == (1920, 1080, 90):
+        return 222750, 280, 88, 44, 45, 4, 5, 0x1E
+    if refresh != 60:
+        raise ValueError("unsupported refresh rate")
     if (width, height) in STANDARD:
         return STANDARD[width, height]
     # A 460 us minimum vertical blank; 48/32/80 horizontal porches/sync.
@@ -46,8 +50,8 @@ def mode_timing(width, height, aspect):
         hb += 8
 
 
-def generate_mode(width, height, aspect, pro):
-    clock, hb, hf, hs, vb, vf, vs, flags = mode_timing(width, height, aspect)
+def generate_mode(width, height, aspect, pro, refresh=60):
+    clock, hb, hf, hs, vb, vf, vs, flags = mode_timing(width, height, aspect, refresh)
     dtd = bytearray(18)
     dtd[:2] = (round(clock / 10)).to_bytes(2, 'little')
     dtd[2:8] = bytes((width & 255, hb & 255, (width >> 8) << 4 | hb >> 8,
@@ -68,16 +72,17 @@ def generate_mode(width, height, aspect, pro):
     base[35] = 0x20  # BIOS-safe 640x480p60 only.
     base[38:54] = b'\x01\x01' * 8
     base[54:72] = dtd
-    name = f'OKV{width}x{height}'.encode()
+    name = (f'OKV{width}x{height}' if refresh == 60 else f'OKV1080p{refresh}').encode()
     assert len(name) <= 12
     base[72:90] = b'\0\0\0\xfc\0' + (name + b'\n').ljust(13, b' ')
     max_h = max(32, math.ceil(clock / (width + hb)))
     max_clock = max(3, math.ceil(clock / 10000))
-    base[90:108] = b'\0\0\0\xfd\0' + bytes((50, 75, 15, max_h, max_clock, 0, 10)) + b' ' * 6
+    base[90:108] = b'\0\0\0\xfd\0' + bytes((50, max(75, refresh), 15, max_h, max_clock, 0, 10)) + b' ' * 6
     base[108:126] = b'\0\0\0\x10\0' + bytes(13)
     base[126] = 1
     # HDMI, VGA fallback and stereo LPCM; preferred mode stays in the base DTD.
-    blocks = bytes((0x41, 1, 0x23, 0x09, 0x04, 0x07, 0x83, 1, 0, 0,
+    video_modes = bytes((0x41, 1)) if refresh == 60 else bytes((0x43, 16, 4, 1))
+    blocks = video_modes + bytes((0x23, 0x09, 0x04, 0x07, 0x83, 1, 0, 0,
                     0x67, 3, 12, 0, 0x10, 0, 0, max(5, math.ceil(clock / 5000)),
                     0xE2, 0, 0xCA))
     cta = bytearray(128)
@@ -103,3 +108,8 @@ def generate_common(destination, pro):
                 continue
             (destination / f'{width}x{height}p60.edid.bin').write_bytes(
                 generate_mode(width, height, aspect, pro))
+
+    # Explicit high-refresh mode for UXC / Pro receivers. It exceeds the
+    # 165 MHz limit used for the ordinary SG200x preset catalogue.
+    (destination / '1920x1080p90.edid.bin').write_bytes(
+        generate_mode(1920, 1080, '16:9', pro, refresh=90))
