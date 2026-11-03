@@ -70,13 +70,17 @@ overwrite the machine presets.
 
 Both NanoKVM and Pro also provide common 60 Hz presets from 480p to 1080p,
 grouped in the UI as 1:1, 5:4, 4:3, 3:2, 16:10, 16:9, 17:9, 21:9, 32:9 and 9:16.
-The portrait set extends to 1080×1920 on Pro. New IDs use `WIDTHxHEIGHTp60`;
+The portrait set extends to 1080×1920 on Pro. New IDs use `WIDTHxHEIGHTpFPS`;
 existing preset IDs stay stable. Resolution, aspect ratio and refresh rate can
 be searched in Display settings, the quick panel and the EDID editor.
 A Common group links to the same files by aliases: 480p/VGA/FWVGA, 720p/HD,
 1080p/FHD, 2K/QHD/1440p (2560×1440), and 4K/UHD/2160p (3840×2160).
 Aliases and compact queries such as `4K30` and `2K 60 Hz` are searchable.
-SG200x presets are limited to 2880×1620 and 165 MHz; Pro to 3840×2160 and 297 MHz.
+Ordinary SG200x presets are limited to 2880×1620 and 165 MHz; Pro to 3840×2160 and 297 MHz.
+Both sets also include `1920x1080p90.edid.bin`: preferred 1920×1080 @ 90 Hz,
+222.75 MHz, with 1080p60 / 720p60 / VGA fallbacks. This high-refresh preset
+exceeds the ordinary SG200x limit and targets LT6911UXC / Pro receivers;
+LT6911C/D compatibility has not been verified. Factory defaults remain 1080p60.
 17:9 and 21:9 include nominal DCI/ultrawide modes such as 2048×1080 and 2560×1080.
 EDID checksums and timing bounds are checked, but unusual modes still depend
 on the source GPU, loopout display and capture firmware; their presence does
