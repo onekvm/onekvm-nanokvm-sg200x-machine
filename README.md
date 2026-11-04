@@ -82,6 +82,9 @@ Both sets also include `1920x1080p90.edid.bin`: preferred 1920×1080 @ 90 Hz,
 exceeds the ordinary SG200x limit and targets LT6911UXC / Pro receivers;
 LT6911C/D compatibility has not been verified. Factory defaults remain 1080p60.
 17:9 and 21:9 include nominal DCI/ultrawide modes such as 2048×1080 and 2560×1080.
+The HDMI TMDS clock ceiling covers every advertised timing, including VGA
+fallbacks, rounded up in 5 MHz units. The preset regression checks this ceiling
+as well as the 1080p60 factory default and the optional 1080p90 timing.
 EDID checksums and timing bounds are checked, but unusual modes still depend
 on the source GPU, loopout display and capture firmware; their presence does
 not mean every mode has been verified on hardware.

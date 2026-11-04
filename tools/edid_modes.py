@@ -82,8 +82,11 @@ def generate_mode(width, height, aspect, pro, refresh=60):
     base[126] = 1
     # HDMI, VGA fallback and stereo LPCM; preferred mode stays in the base DTD.
     video_modes = bytes((0x41, 1)) if refresh == 60 else bytes((0x43, 16, 4, 1))
+    # The HDMI VSDB ceiling is in 5 MHz units and must cover every mode,
+    # including the 25.175 MHz VGA fallback of a 25 MHz preferred timing.
+    tmds_limit = math.ceil(max(clock, STANDARD[640, 480][0]) / 5000)
     blocks = video_modes + bytes((0x23, 0x09, 0x04, 0x07, 0x83, 1, 0, 0,
-                    0x67, 3, 12, 0, 0x10, 0, 0, max(5, math.ceil(clock / 5000)),
+                    0x67, 3, 12, 0, 0x10, 0, 0, tmds_limit,
                     0xE2, 0, 0xCA))
     cta = bytearray(128)
     cta[:4] = bytes((2, 3, 4 + len(blocks), 0xf0))
