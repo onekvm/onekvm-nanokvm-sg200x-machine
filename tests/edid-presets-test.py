@@ -7,6 +7,36 @@ root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / 'tools'))
 from edid_modes import RESOLUTIONS
 
+# Pixel clocks from CTA-861, independent of the preset generators. Include
+# fallback VICs: even a 25 MHz preferred timing advertises 25.175 MHz VGA.
+CTA_CLOCK_KHZ = {1: 25175, 4: 74250, 16: 148500, 63: 297000, 95: 297000}
+
+
+def validate_tmds_clock(data, path):
+    clocks = [int.from_bytes(data[i:i + 2], 'little') * 10
+              for i in range(54, 126, 18) if data[i] or data[i + 1]]
+    end = 128 + data[130]
+    limits = []
+    offset = 132
+    while offset < end:
+        header = data[offset]
+        length = header & 31
+        assert offset + 1 + length <= end, path
+        payload = data[offset + 1:offset + 1 + length]
+        if header >> 5 == 2:
+            clocks.extend(CTA_CLOCK_KHZ[vic & 127] for vic in payload)
+        elif header >> 5 == 3 and payload[:3] == bytes.fromhex('030c00'):
+            assert length >= 7, path
+            if payload[6]:  # Zero means the maximum was not declared.
+                limits.append(payload[6] * 5000)
+        offset += 1 + length
+    for offset in range(end, 237, 18):
+        if data[offset] or data[offset + 1]:
+            clocks.append(int.from_bytes(data[offset:offset + 2], 'little') * 10)
+    for limit in limits:
+        assert limit >= max(clocks), (path, 'TMDS ceiling kHz', limit, 'required kHz', max(clocks))
+
+
 for pro in [False, True]:
     directory = root / 'share/edid' / ('pro' if pro else '')
     files = list(directory.glob('*.edid.bin'))
@@ -22,6 +52,13 @@ for pro in [False, True]:
         if path.name != 'factory.edid.bin':
             assert data[131] & 0x80 and (data[131] & 0x0f) == 0, path
         assert sum(data[:128]) % 256 == sum(data[128:]) % 256 == 0, path
+        validate_tmds_clock(data, path)
+        if path.name in ('factory.edid.bin', '1080p60.edid.bin'):
+            d = data[54:72]
+            w, h = d[2] | (d[4] >> 4) << 8, d[5] | (d[7] >> 4) << 8
+            hb, vb = d[3] | (d[4] & 15) << 8, d[6] | (d[7] & 15) << 8
+            hz = int.from_bytes(d[:2], 'little') * 10000 / ((w + hb) * (h + vb))
+            assert (w, h) == (1920, 1080) and abs(hz - 60) < 0.01, path
         if 'x' not in path.stem:
             continue
         width, rest = path.name.split('x')
@@ -60,4 +97,4 @@ for pro in [False, True]:
             assert int.from_bytes(d[:2], 'little') * 10 <= 297000, name
     for aspect, sizes in RESOLUTIONS.items():
         assert any((directory / f'{w}x{h}p60.edid.bin').exists() for w, h in sizes), aspect
-    print(('Pro' if pro else 'SG200x'), len(files), 'EDIDs: all ten ratios, checksums, timing and bounds passed')
+    print(('Pro' if pro else 'SG200x'), len(files), 'EDIDs: checksums, timing, TMDS ceilings, default 1080p60 and optional 1080p90 passed')
