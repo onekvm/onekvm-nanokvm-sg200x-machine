@@ -74,7 +74,7 @@ def _fixed_ascii(value, size, field):
     return encoded + bytes(size - len(encoded))
 
 
-def make_trailer(profile, payload_size, payload_sha256, build_id):
+def make_trailer(profile, payload_size, payload_sha256, build_id, network_policy=False):
     """Return metadata followed by its full-image digest placeholder.
 
     The final digest is calculated by :func:`append_trailer` after the
@@ -99,7 +99,7 @@ def make_trailer(profile, payload_size, payload_sha256, build_id):
     metadata[:16] = TRAILER_MAGIC
     struct.pack_into('<HHBBHQHH', metadata, 16,
                      TRAILER_VERSION, TRAILER_METADATA_SIZE,
-                     PROFILE_IDS[profile], MEDIA_IDS[profile], 0,
+                     PROFILE_IDS[profile], MEDIA_IDS[profile], int(network_policy),
                      payload_size, 96, 0)
     metadata[36:68] = payload_digest
     metadata[68:164] = build
@@ -108,9 +108,9 @@ def make_trailer(profile, payload_size, payload_sha256, build_id):
     return bytes(metadata)
 
 
-def append_trailer(output, profile, payload_size, build_id):
+def append_trailer(output, profile, payload_size, build_id, network_policy=False):
     payload_sha256 = digest(output, size=payload_size)
-    metadata = make_trailer(profile, payload_size, payload_sha256, build_id)
+    metadata = make_trailer(profile, payload_size, payload_sha256, build_id, network_policy)
     with open(output, 'ab') as dest:
         dest.write(metadata)
         dest.flush()
@@ -123,7 +123,7 @@ def append_trailer(output, profile, payload_size, build_id):
     assert Path(output).stat().st_size == payload_size + TRAILER_SIZE
     return payload_sha256, full_sha256
 
-def build(profile, boot, rootfs, output, build_id, raw=()):
+def build(profile, boot, rootfs, output, build_id, raw=(), network_policy=False):
     disk_id, boot_at, target_boot_size, target_root_at, slot_size, root_b, data_at = LAYOUTS[profile]
     boot_bytes = Path(boot).stat().st_size
     boot_size = boot_bytes // 512
@@ -180,12 +180,12 @@ def build(profile, boot, rootfs, output, build_id, raw=()):
         fd = os.open(output, os.O_RDONLY)
         assert os.lseek(fd, 0, os.SEEK_DATA) >= boot_at * 512, 'vendor boot prefix was written'
         os.close(fd)
-    payload_sha256, image_sha256 = append_trailer(output, profile, image_size, build_id)
+    payload_sha256, image_sha256 = append_trailer(output, profile, image_size, build_id, network_policy)
     file_sha256 = digest(output)
     manifest = dict(build_id=build_id, media=profile, image_size=image_size,
                     file_size=image_size + TRAILER_SIZE,
                     trailer_offset=image_size, trailer_size=TRAILER_SIZE,
-                    metadata_version=TRAILER_VERSION,
+                    metadata_version=TRAILER_VERSION, network_policy=int(network_policy),
                     payload_sha256=payload_sha256, image_sha256=image_sha256,
                     file_sha256=file_sha256,
                     partition_table=table, rootfstype='squashfs', overlay='shared-upper',
@@ -213,6 +213,7 @@ if __name__ == '__main__':
     for name in ('profile', 'boot', 'rootfs', 'output', 'build-id'):
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--raw', action='append', default=[], help='FILE@BYTE_OFFSET (eMMC only)')
+    parser.add_argument('--network-policy', action='store_true', help='Rootfs implements installer network policy v1')
     args = parser.parse_args()
     raw = [(Path(pair.rsplit('@', 1)[0]), int(pair.rsplit('@', 1)[1])) for pair in args.raw]
-    build(args.profile, args.boot, args.rootfs, args.output, args.build_id, raw)
+    build(args.profile, args.boot, args.rootfs, args.output, args.build_id, raw, args.network_policy)

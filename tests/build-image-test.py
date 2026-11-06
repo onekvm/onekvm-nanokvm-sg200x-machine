@@ -83,6 +83,18 @@ class ImageTests(unittest.TestCase):
                     self.assertEqual(output.stat().st_size, source_root * 512 + 4096 + 512)
                     self.assertLess(output.stat().st_size, CAPACITY)
 
+    def test_policy_capability_is_explicit_and_covered_by_digest(self):
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled), tempfile.TemporaryDirectory() as work:
+                directory = Path(work)
+                output = directory / 'payload'
+                output.write_bytes(b'test payload')
+                payload_hash, image_hash = builder.append_trailer(output, 'nanokvm', 12, 'test', enabled)
+                trailer = output.read_bytes()[12:]
+                self.assertEqual(struct.unpack_from('<H', trailer, 22)[0], int(enabled))
+                self.assertEqual(builder.digest(output, size=12), payload_hash)
+                self.assertEqual(builder.digest(output, size=12 + 480), image_hash)
+
     def test_exact_slot_capacity_is_accepted(self):
         with tempfile.TemporaryDirectory() as work:
             directory = Path(work)
