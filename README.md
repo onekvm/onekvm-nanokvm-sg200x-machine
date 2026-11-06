@@ -239,3 +239,12 @@ than `non-removable`. An empty mmc1 host is valid; mmc0 remains the storage
 card. The machine script only inspects physical devices under this SDIO
 host. It neither exports/drives GPIOA26 nor assumes a single SDIO vendor ID.
 Detecting a module does not establish driver or firmware support.
+
+## Installer network policy capability
+
+The storage builder's `--network-policy` flag sets metadata v1 feature bit 0
+(offset 22). Set it only when the rootfs contains policy-aware Core/CLI,
+startup units, firewall tools and extension host. It is included in the full
+image digest and recorded as `network_policy=1` in the manifest. The default
+remains zero for existing images. Installers without feature-bit support reject
+these images rather than ignoring installed opt-outs.
