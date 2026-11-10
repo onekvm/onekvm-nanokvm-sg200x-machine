@@ -527,6 +527,7 @@ static const u8 digit_font3[10][5] = {
 
 static const u8 blank_glyph[5];
 static const u8 slash_glyph[5] = { 1, 1, 2, 4, 4 };
+static const u8 percent_glyph[5] = { 5, 1, 2, 4, 5 };
 static const u8 unknown_glyph[5] = { 6, 1, 2, 0, 2 };
 
 #define ONEKVM_INSTALL_STEPS 7
@@ -535,6 +536,18 @@ static const u8 unknown_glyph[5] = { 6, 1, 2, 0, 2 };
 static const char * const install_step_names[ONEKVM_INSTALL_STEPS + 1] = {
 	"", "READ SYSTEM", "READ BOOT", "PARTITIONS", "WRITE BOOT",
 	"WRITE SYSTEM", "USER DATA", "FINISHING",
+};
+
+/*
+ * Before first boot, the installer writes the whole card from RAM. Those
+ * phases report a percentage instead of a step number.
+ */
+enum install_phase { PHASE_STEP, PHASE_READ, PHASE_CHECK, PHASE_WRITE };
+static const char * const install_phase_kinds[] = {
+	"install", "read", "check", "write",
+};
+static const char * const install_phase_names[] = {
+	"", "READ IMAGE", "CHECK IMAGE", "WRITE SD",
 };
 
 static const u8 *glyph_for(char character, int *width)
@@ -550,6 +563,8 @@ static const u8 *glyph_for(char character, int *width)
 		return blank_glyph;
 	if (character == '/')
 		return slash_glyph;
+	if (character == '%')
+		return percent_glyph;
 	return unknown_glyph;
 }
 
@@ -601,6 +616,7 @@ static void draw_text(u8 *frame, int width, int height, int y,
 
 static bool state_error;
 static unsigned int state_step;
+static enum install_phase state_phase;
 static bool display_running;
 static bool recovery_blink;
 static bool rtos_live;
@@ -627,6 +643,11 @@ static size_t render_state(void)
 		lines[0] = "SETUP FAILED";
 		lines[1] = state_step ? progress : "CHECK SD CARD";
 		lines[2] = state_step ? "CHECK SD CARD" : "";
+	} else if (state_phase != PHASE_STEP) {
+		snprintf(progress, sizeof(progress), "%u%%", state_step);
+		lines[0] = "INSTALLING";
+		lines[1] = install_phase_names[state_phase];
+		lines[2] = progress;
 	} else {
 		lines[0] = "INSTALLING";
 		lines[1] = state_step ? progress : "PLEASE WAIT";
@@ -767,19 +788,27 @@ static void onekvm_blink_work(struct work_struct *work)
 	schedule_delayed_work(&blink_work, delay);
 }
 
-static int parse_state(const char *value, bool *error, unsigned int *step)
+static int parse_state(const char *value, bool *error,
+		       enum install_phase *phase, unsigned int *step)
 {
 	char kind[8];
 	unsigned int number = 0;
 	int fields = sscanf(value, "%7s %u", kind, &number);
+	unsigned int index;
 
-	if (fields < 1 || number > ONEKVM_INSTALL_STEPS)
+	if (fields < 1)
 		return -EINVAL;
-	if (!strcmp(kind, "install"))
-		*error = false;
-	else if (!strcmp(kind, "error"))
-		*error = true;
-	else
+	*error = !strcmp(kind, "error");
+	*phase = PHASE_STEP;
+	if (!*error) {
+		for (index = 0; index < ARRAY_SIZE(install_phase_kinds); ++index)
+			if (!strcmp(kind, install_phase_kinds[index]))
+				break;
+		if (index == ARRAY_SIZE(install_phase_kinds))
+			return -EINVAL;
+		*phase = index;
+	}
+	if (number > (*phase == PHASE_STEP ? ONEKVM_INSTALL_STEPS : 100))
 		return -EINVAL;
 	*step = number;
 	return 0;
@@ -788,35 +817,34 @@ static int parse_state(const char *value, bool *error, unsigned int *step)
 /*
  * /sys/module/onekvm_installing_oled/parameters/state takes "install N"
  * while step N runs and "error N" when setup stops; N is 0 before step 1.
- * Install screens blink every three seconds. Error screens stay on.
+ * While the whole card is written, "read P", "check P" and "write P" show
+ * that phase at P percent. Install and error screens stay on.
  */
 static int state_set(const char *value, const struct kernel_param *kp)
 {
+	enum install_phase phase;
 	bool error;
 	unsigned int step;
 	int ret;
 
 	(void)kp;
-	ret = parse_state(value, &error, &step);
+	ret = parse_state(value, &error, &phase, &step);
 	if (ret)
 		return ret;
-	if (error)
-		cancel_delayed_work_sync(&blink_work);
 	mutex_lock(&display_lock);
 	state_error = error;
+	state_phase = phase;
 	state_step = step;
 	ret = display_running ? show_state_locked() : 0;
 	mutex_unlock(&display_lock);
-	if (!error && display_running)
-		mod_delayed_work(system_wq, &blink_work,
-				 msecs_to_jiffies(ONEKVM_BLINK_PERIOD_MS));
 	return ret;
 }
 
 static int state_get(char *buffer, const struct kernel_param *kp)
 {
 	(void)kp;
-	return sysfs_emit(buffer, "%s %u\n", state_error ? "error" : "install",
+	return sysfs_emit(buffer, "%s %u\n",
+			  state_error ? "error" : install_phase_kinds[state_phase],
 			  state_step);
 }
 
@@ -825,7 +853,7 @@ static const struct kernel_param_ops state_ops = {
 	.get = state_get,
 };
 module_param_cb(state, &state_ops, NULL, 0644);
-MODULE_PARM_DESC(state, "Install screen: 'install N' or 'error N' (N = 0-7)");
+MODULE_PARM_DESC(state, "Install screen: 'install N' or 'error N' (N = 0-7), or 'read P', 'check P', 'write P' (P = 0-100)");
 
 static void restore_hardware_state(void)
 {
@@ -991,9 +1019,6 @@ static int __init onekvm_installing_oled_init(void)
 			display_running = true;
 		mutex_unlock(&display_lock);
 		if (!ret) {
-			if (display_running && !state_error)
-				schedule_delayed_work(&blink_work,
-						      msecs_to_jiffies(ONEKVM_BLINK_PERIOD_MS));
 			pr_info("onekvm-installing-oled: posted %s screen to C906L\n",
 				display_mode);
 			return 0;
@@ -1055,7 +1080,7 @@ static int __init onekvm_installing_oled_init(void)
 	if (ret)
 		goto fail;
 
-	if (recovery_mode || !state_error)
+	if (recovery_mode)
 		schedule_delayed_work(&blink_work,
 				      msecs_to_jiffies(ONEKVM_BLINK_PERIOD_MS));
 	pr_info("onekvm-installing-oled: %s %s screen active\n",
