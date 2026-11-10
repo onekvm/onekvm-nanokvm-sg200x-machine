@@ -112,46 +112,32 @@ from this negotiation. Regenerate the Pro files with
 `python3 tools/generate-pro-edid.py`; the separate directory keeps these modes
 out of the SG2002 machine package.
 
-The Pro machine package installs the 1080p60 preset as its factory EDID.
-The shared `onekvm-capture-chip-init.service` applies it before Core starts on
-the first boot with new OneKVM data. It saves the previous bridge EDID in
-`/var/lib/onekvm/edid/before-pro-default.bin`, verifies the driver's readback,
-and then creates `pro-default-initialized` in the same directory. Later boots
-and package upgrades preserve the user's EDID. Clearing OneKVM data also
-clears this marker, so factory reset restores this preferred-1080p60 default on next boot.
-This uses the bridge driver's EDID operation; firmware code is not replaced.
+The Pro machine package ships EDID presets, including 1080p60, for the Web
+EDID settings. Boot never programs the bridge EDID: the bridge keeps its
+existing EDID until the user changes it. The Pro bridge can be LT6911UXC,
+LT6911D or LT6911C; the family driver detects the register ID rather than
+assuming UXC from the board name. Pro's `20-pro-chip-info` hook only links
+`/run/onekvm/lt6911_info` to the driver's `/proc/lt6911_info`, the same shell
+lookup path used by the SG2002 MMF diagnostic cache. A missing driver is not
+an initialization failure.
 
-Initialization reads Flash directly with one bounded 256-byte read, without
-using `edid_snapshot` or changing the power interface in userspace. A read
-failure or incomplete value stops initialization without programming Flash
-or recording success. Writes still use the driver's verified Flash readback.
-
-The Pro bridge can be LT6911UXC, LT6911D or LT6911C. The family driver detects
-the register ID rather than assuming UXC from the board name. D uses its own
-Flash sequence. C supports guarded manual EDID management, but retains its
-factory EDID on installation without creating an initialization marker; its
-Pro erase extent still needs hardware validation. A missing driver identity
-or unknown chip remains an initialization failure.
-
-UXC permanent EDID settings are programmed into the bridge Flash. The hook
-initializes the bundled Flash default once, then its marker protects subsequent
-user settings on boot and package upgrades. It never restores `active.bin`
-into RAM or writes EDID before each Core restart. Temporary RAM application
-belongs to the backend's optional mode and does not change this Flash default.
-Unavailable Shadow support only disables temporary mode, not permanent Flash
-management. Pro Shadow hardware acceptance is still pending.
-
-The Pro hook links `/run/onekvm/lt6911_info` to `/proc/lt6911_info`, providing
-the same shell lookup path used by the SG2002 MMF diagnostic cache.
+UXC and D permanent EDID settings are written to the bridge Flash; D uses its
+own Flash sequence. C supports guarded manual EDID management; its Pro erase
+extent still needs hardware validation. UXC temporary RAM application belongs
+to the backend's optional mode and does not change Flash. Unavailable Shadow
+support only disables temporary mode, not permanent Flash management. Pro
+Shadow hardware acceptance is still pending.
 
 Capture chip initialization is shared by Pro and Cube/PCIe. Executable hooks
 in `/usr/libexec/onekvm/capture-chip-init.d/` run in filename order before
-MMF modules and Core. Firmware updates use the `10-` prefix and default EDID
-uses `20-`; a failed hook stops initialization and prevents capture startup.
+MMF modules and Core. Firmware updates use the `10-` prefix and chip
+information uses `20-`; a failed hook stops the remaining hooks and leaves
+capture unavailable. Core still starts, so Web, SSH and the screen remain
+available. The PCIe firmware hook leaves C, D and other UXC revisions
+unchanged for the capture backend; only a failed read or unknown chip fails.
 
-Firmware hooks must check the actual chip on each initialization; the EDID
-marker must not suppress later firmware updates. An already matching image
-needs no programming. After a verified update, Pro and PCIe use their own
+Firmware hooks must check the actual chip on each initialization. An already
+matching image needs no programming. After a verified update, Pro and PCIe use their own
 bridge reset mechanisms. Cube has no controllable bridge reset line: its EDID
 API reports `REBOOT`, and firmware updates must remain pending until a machine
 restart and verification. Whether a warm reboot reloads the Cube MCU, or a

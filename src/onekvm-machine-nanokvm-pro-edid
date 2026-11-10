@@ -1,86 +1,23 @@
 #!/bin/sh
-# Initialize the persistent Pro HDMI EDID once per OneKVM data installation.
+# Publish the Pro bridge driver's information at the shared shell lookup path.
+# Boot never programs the bridge EDID; users change it from the Web settings.
 set -eu
 
 model_path=${ONEKVM_EDID_MODEL_PATH:-/proc/device-tree/model}
-device=${ONEKVM_EDID_DEVICE:-/proc/lt6911_info/edid}
-chip_path=${ONEKVM_EDID_CHIP_PATH:-/proc/lt6911_info/chip_id}
-preset=${ONEKVM_EDID_PRESET:-/usr/share/onekvm/edid/presets/factory.edid.bin}
-state=${ONEKVM_EDID_STATE_DIR:-/var/lib/onekvm/edid}
-marker=$state/pro-default-initialized
+info=${ONEKVM_LT6911_PROC:-/proc/lt6911_info}
+run_dir=${ONEKVM_RUN_DIR:-/run/onekvm}
 
 model=$(tr -d '\000' <"$model_path")
 case "$model" in
     *NanoKVM*Pro*) ;;
-    *) echo "Pro EDID: another machine; skip"; exit 0 ;;
+    *) echo "Pro capture chip: another machine; skip"; exit 0 ;;
 esac
-# A common shell lookup path; hardware access still belongs to the Pro driver.
-if [ "$chip_path" = /proc/lt6911_info/chip_id ] && [ -d /proc/lt6911_info ]; then
-    mkdir -p /run/onekvm
-    if [ ! -e /run/onekvm/lt6911_info ] && [ ! -L /run/onekvm/lt6911_info ]; then
-        ln -s /proc/lt6911_info /run/onekvm/lt6911_info
-    fi
+if [ ! -d "$info" ]; then
+    echo "Pro capture chip: driver information unavailable" >&2
+    exit 0
 fi
-# Keep C's factory EDID on installation. Its guarded manual EDID interface
-# does not imply that an unverified Pro C erase should run automatically.
-[ -r "$chip_path" ] || {
-    echo "Pro EDID: bridge chip identity unavailable; left unchanged" >&2
-    exit 1
-}
-chip=$(tr -d '\r\n' <"$chip_path")
-case "$chip" in
-    lt6911c) echo "Pro EDID: LT6911C retaining factory EDID; manual management available"; exit 0 ;;
-    lt6911uxc|lt6911d) ;;
-    *) echo "Pro EDID: unsupported bridge chip: $chip" >&2; exit 1 ;;
-esac
-[ ! -f "$marker" ] || exit 0
-[ -r "$device" ] && [ -w "$device" ] || {
-    echo "Pro EDID: bridge EDID interface unavailable" >&2
-    exit 1
-}
-[ "$(wc -c <"$preset")" -eq 256 ] || {
-    echo "Pro EDID: preset must contain 256 bytes" >&2
-    exit 1
-}
-
-mkdir -p "$state"
-work=$(mktemp -d "$state/.pro-default.XXXXXX")
-trap 'rm -rf "$work"' EXIT
-read_current_edid() {
-    # Read Flash directly, without a snapshot or userspace power operation.
-    # One bounded read avoids an extra EOF syscall on older kernels.
-    dd if="$device" of="$1" bs=256 count=1 2>/dev/null
-}
-read_current_edid "$work/before.bin"
-[ "$(wc -c <"$work/before.bin")" -eq 256 ] || {
-    echo "Pro EDID: incomplete bridge read; left unchanged" >&2
-    exit 1
-}
-if ! cmp -s "$preset" "$work/before.bin"; then
-    # Preserve the original even if a write fails and initialization retries.
-    if [ ! -e "$state/before-pro-default.bin" ]; then
-        cp "$work/before.bin" "$work/backup.bin"
-        mv "$work/backup.bin" "$state/before-pro-default.bin"
-        sync
-    fi
-    # The driver validates both checksums, programs only the EDID region,
-    # verifies it and power-cycles the bridge. It requires one 256-byte write.
-    dd if="$preset" of="$device" bs=256 count=1
-    # The bridge has just restarted and the proc reader can still serve its
-    # previous 500 ms cache. Retry reads only; never reprogram on a stale read.
-    for attempt in 1 2 3 4 5; do
-        sleep 0.6
-        if read_current_edid "$work/after.bin" &&
-            cmp -s "$preset" "$work/after.bin"; then
-            break
-        fi
-    done
-    cmp -s "$preset" "$work/after.bin" || {
-        echo "Pro EDID: readback verification failed" >&2
-        exit 1
-    }
+mkdir -p "$run_dir"
+if [ ! -e "$run_dir/lt6911_info" ] && [ ! -L "$run_dir/lt6911_info" ]; then
+    ln -s "$info" "$run_dir/lt6911_info"
 fi
-sha256sum "$preset" | cut -d ' ' -f 1 >"$work/initialized"
-mv "$work/initialized" "$marker"
-sync
-echo "Pro EDID: 1920x1080@60 default initialized"
+echo "Pro capture chip: $(tr -d '\r\n' <"$info/chip_id" 2>/dev/null || echo unknown)"
