@@ -8,7 +8,9 @@ Type=oneshot
 TimeoutStartSec=180
 # Package installation may request a service restart during an active stream.
 # Defer chip access until Core next starts with the capture bus released.
-ExecCondition=/bin/sh -c '! systemctl is-active --quiet onekvm.service'
+# A later transaction (for example D-Bus activation of a unit bound to Core)
+# re-queues this unit after a failure; Core is then still "activating".
+ExecCondition=/bin/sh -c 'case "$(systemctl is-active onekvm.service)" in inactive|failed) exit 0 ;; *) exit 1 ;; esac'
 ExecStart=/usr/libexec/onekvm/onekvm-capture-chip-init
 RemainAfterExit=yes
 
