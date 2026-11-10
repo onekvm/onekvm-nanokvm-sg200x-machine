@@ -351,7 +351,7 @@ nanokvm_start_oled() {
     [ "$storage_media" = nanokvm ] || return 0
     if insmod "$nanokvm_oled_module" mode=install step="${nanokvm_oled_step:-0}" 2>/dev/null; then
         oled_loaded=true
-        msg "OneKVM: Install OS OLED screen enabled (3 second blink)"
+        msg "OneKVM: Install OS OLED screen enabled"
     else
         info "OneKVM: Installing OLED is not available on this board"
     fi
