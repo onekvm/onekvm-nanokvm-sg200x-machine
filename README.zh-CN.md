@@ -107,24 +107,22 @@ EDID 从协商中移除。使用
 `python3 tools/generate-pro-edid.py` 可重新生成；独立目录避免将 Pro 模式装入
 SG2002 的机型包。
 
-Pro 机型包将普通 1080p60 预设安装为出厂 EDID。
-共用的 `onekvm-capture-chip-init.service` 在使用新 OneKVM 数据的首次启动时、
-Core 启动前应用默认值。它先将桥片原 EDID 备份到
-`/var/lib/onekvm/edid/before-pro-default.bin`，回读校验通过后在同目录创建
-`pro-default-initialized` 标记。后续启动和软件包升级保留用户的 EDID；
-清除 OneKVM 数据也会清除标记，下次启动重新恢复首选 1080p60 的默认值。
-此过程使用桥片驱动的 EDID 操作，不替换固件代码。
+Pro 机型包附带 1080p60 等 EDID 预设，供网页 EDID 设置选择。开机不写入桥片
+EDID，桥片保留原有 EDID，用户可在网页上更改。Pro 的 `20-pro-chip-info` hook
+只把 `/run/onekvm/lt6911_info` 链接到驱动的 `/proc/lt6911_info`，与 SG2002 MMF
+诊断缓存使用相同的查找路径；驱动不存在时不视为初始化失败。
 
-初始化直接单次读取 Flash 的 256 字节，不使用 `edid_snapshot`，也不在脚本中
-操作 `power` 接口。读取失败或数据不完整时停止初始化，不写 Flash 或成功标记。
-写入仍由驱动校验 Flash 回读。
+UXC 和 D 的永久 EDID 写入桥片 Flash，D 使用独立的 Flash 时序。C 支持受保护的
+手动 EDID 管理，其 Pro 擦除范围仍需实机验证。UXC 临时 RAM 应用属于后端可选模式，
+不改动 Flash；不支持 Shadow 只关闭临时模式。Pro Shadow 仍待实机验收。
 
 Pro 与 Cube/PCIe 共用采集芯片初始化服务。它在 MMF 模块和 Core 启动前按文件名
 顺序执行 `/usr/libexec/onekvm/capture-chip-init.d/` 下的可执行 hook：固件升级
-使用 `10-` 前缀，默认 EDID 使用 `20-`。任一 hook 失败会停止初始化并阻止采集启动。
+使用 `10-` 前缀，芯片信息使用 `20-`。任一 hook 失败会停止后续 hook，采集不可用；
+Core 仍会启动，网页、SSH 和屏幕照常可用。PCIe 固件 hook 遇到 C、D 或其他 UXC
+修订时不改动桥片，交由采集后端识别；只有读取失败或未知芯片才失败。
 
-固件 hook 每次初始化都应检查实际芯片；EDID 标记不能阻止后续固件升级，固件已
-匹配时跳过写入。升级校验后，Pro 和 PCIe 使用各自的桥片复位机制。Cube 没有
+固件 hook 每次初始化都应检查实际芯片，固件已匹配时跳过写入。升级校验后，Pro 和 PCIe 使用各自的桥片复位机制。Cube 没有
 可控的桥片硬件复位线：EDID API 返回 `REBOOT`，固件升级也需标记为待整机重启，
 重启后再确认生效。普通重启能否重新加载 Cube MCU、是否必须断电重启，仍需
 Cube 固件升级实机验收。Cube 的差异升级由独立的 `onekvm-capture-firmware`
