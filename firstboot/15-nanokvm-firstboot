@@ -7,6 +7,7 @@ nanokvm_enabled() {
 }
 
 nanokvm_die() {
+    nanokvm_oled_error
     # The record is best-effort. A save failure must still reach fatal.
     nanokvm_save_boot_error "$1" || true
     if [ "${nanokvm_boot_error_saved:-false}" = true ]; then
@@ -23,6 +24,10 @@ nanokvm_die_userdata() {
 }
 
 nanokvm_splash() {
+    if [ "${1:-}" = install ] && [ -n "${2:-}" ]; then
+        nanokvm_oled_step=$2
+        nanokvm_oled_state install "$2"
+    fi
     command -v onekvm-boot-splash >/dev/null 2>&1 || return 0
     onekvm-boot-splash --language "${splash_language:-en}" "$@" 2>/dev/null || true
 }
@@ -332,15 +337,37 @@ nanokvm_filesystem_type() {
     blkid -p -s TYPE -o value "$1" 2>/dev/null || true
 }
 
+nanokvm_oled_module=/usr/lib/onekvm-initramfs/onekvm-installing-oled.ko
+nanokvm_oled_param=/sys/module/onekvm_installing_oled/parameters/state
+
+nanokvm_oled_state() {
+    [ "${oled_loaded:-false}" = true ] || return 0
+    printf '%s %s\n' "$1" "$2" >"$nanokvm_oled_param" 2>/dev/null ||
+        info "OneKVM: could not update the Installing OLED"
+}
+
 nanokvm_start_oled() {
     oled_loaded=false
     [ "$storage_media" = nanokvm ] || return 0
-    if insmod /usr/lib/onekvm-initramfs/onekvm-installing-oled.ko mode=install 2>/dev/null; then
+    if insmod "$nanokvm_oled_module" mode=install step="${nanokvm_oled_step:-0}" 2>/dev/null; then
         oled_loaded=true
-        msg "OneKVM: Install OS OLED canvas enabled (3 second blink)"
+        msg "OneKVM: Install OS OLED screen enabled (3 second blink)"
     else
         info "OneKVM: Installing OLED is not available on this board"
     fi
+}
+
+# Show where setup stopped. The module exists only in NanoKVM initramfs, so
+# this also covers failures before the boot medium is identified.
+nanokvm_oled_error() {
+    if [ "${oled_loaded:-false}" = true ]; then
+        nanokvm_oled_state error "${nanokvm_oled_step:-0}"
+        return 0
+    fi
+    [ -f "$nanokvm_oled_module" ] || return 0
+    case "${storage_media:-nanokvm}" in nanokvm) ;; *) return 0 ;; esac
+    insmod "$nanokvm_oled_module" mode=error step="${nanokvm_oled_step:-0}" 2>/dev/null &&
+        oled_loaded=true
 }
 
 nanokvm_stop_oled() {

@@ -7,6 +7,8 @@
  * normal GPIO-I2C stack before storage migration. A responsive C906L owns
  * the display; otherwise probe the Cube OLED (0x3d) before the PCIe OLED
  * (0x3c) and select the matching canvas and display geometry.
+ * Install and setup error screens are drawn from the step written to the
+ * `state` parameter; Recovery keeps its official canvas.
  */
 
 #include <linux/bitops.h>
@@ -21,6 +23,7 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/string.h>
+#include <linux/sysfs.h>
 #include <linux/version.h>
 #include <linux/workqueue.h>
 
@@ -56,7 +59,10 @@
 
 static char *display_mode = "install";
 module_param_named(mode, display_mode, charp, 0444);
-MODULE_PARM_DESC(mode, "OLED canvas to display: install or recovery");
+MODULE_PARM_DESC(mode, "Screen to display: install, error or recovery");
+static unsigned int initial_step;
+module_param_named(step, initial_step, uint, 0444);
+MODULE_PARM_DESC(step, "Install step shown at load time (0-7)");
 
 struct onekvm_oled_profile {
 	const char *name;
@@ -116,48 +122,6 @@ static size_t last_i2c_index;
 static DEFINE_MUTEX(display_lock);
 static void onekvm_blink_work(struct work_struct *work);
 static DECLARE_DELAYED_WORK(blink_work, onekvm_blink_work);
-
-/*
- * Rendered by onekvm-extension-nanokvm-oled/src/main.cpp from
- * assets/canvases/system-installing-pcie.json at rotation 0 degrees.
- * Source canvas SHA-256:
- * d3a079b1e3e0cce1409b0dafbd2f722fe48ed4088fbe9b0dc2d9d70d16ed97e4
- */
-static const u8 pcie_installing_frame[ONEKVM_PCIE_OLED_WIDTH *
-				      ONEKVM_PCIE_OLED_PAGES] = {
-	0xc0, 0x40, 0x40, 0x40, 0x80, 0x00, 0xc0, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0xc0, 0x40, 0x40, 0x40,
-	0x40, 0x00, 0x80, 0x40, 0x40, 0x40, 0x80, 0x00,
-	0x80, 0x40, 0x40, 0x40, 0x40, 0x00, 0xc0, 0x40,
-	0x40, 0x40, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0xc0, 0x00, 0x00, 0x00, 0xc0, 0x00, 0x80, 0x40,
-	0x40, 0x40, 0x80, 0x00, 0x40, 0x40, 0xc0, 0x40,
-	0x40, 0x00, 0x40, 0x40, 0xc0, 0x40, 0x40, 0x00,
-	0x07, 0x01, 0x01, 0x01, 0x00, 0x00, 0x07, 0x44,
-	0x44, 0xc4, 0x44, 0x00, 0xc7, 0x85, 0x05, 0xc5,
-	0x04, 0x80, 0x47, 0x41, 0x41, 0x01, 0x47, 0x40,
-	0xc4, 0x45, 0x05, 0x85, 0x42, 0x40, 0x87, 0x05,
-	0xc5, 0x05, 0x04, 0x00, 0x00, 0xc0, 0x00, 0x00,
-	0x07, 0x02, 0x41, 0x42, 0xc7, 0x40, 0x07, 0xc1,
-	0x81, 0x01, 0xc7, 0x00, 0x84, 0x44, 0x47, 0x44,
-	0x04, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04,
-	0x04, 0x07, 0x04, 0x00, 0x07, 0x00, 0x01, 0x07,
-	0x00, 0x04, 0x05, 0x05, 0x02, 0x00, 0x00, 0x00,
-	0x07, 0x00, 0x80, 0x47, 0x41, 0x41, 0x87, 0x00,
-	0x87, 0x44, 0x44, 0x44, 0x40, 0x07, 0x04, 0x04,
-	0x04, 0x00, 0x04, 0x04, 0x07, 0x04, 0x00, 0x07,
-	0x00, 0x01, 0x07, 0x00, 0x03, 0x04, 0x05, 0x07,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x03, 0x04, 0x04, 0x04, 0x03, 0x00,
-	0x04, 0x05, 0x05, 0x05, 0x02, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-};
 
 /*
  * Rendered by onekvm-extension-nanokvm-oled/src/main.cpp from
@@ -236,59 +200,6 @@ static const u8 cube_recovery_frame_rle[] = {
 	0x06, 0x60, 0x02, 0x1f, 0x02, 0x00, 0x02, 0x7f,
 	0x06, 0x60, 0x02, 0x1f, 0x02, 0x00, 0x02, 0x7f,
 	0x06, 0x66, 0x02, 0x60, 0xff, 0x00, 0x2a, 0x00,
-};
-
-/*
- * Rendered from the Cube's latest active canvas, saved as
- * assets/canvases/system-installing-cube.json at rotation 0 degrees.  Each
- * byte pair is run length followed by value and expands to 1024 controller
- * bytes.  Source canvas SHA-256:
- * 826926406bb89fb18ec68a1ea177cce8dcedd0b2c3de5deb2bd4f00ce1794173
- */
-static const u8 cube_installing_frame_rle[] = {
-	0x81, 0x00, 0x02, 0xfe, 0x06, 0x66, 0x02, 0x18,
-	0x02, 0x00, 0x02, 0xfe, 0x0a, 0x00, 0x02, 0xfe,
-	0x06, 0x66, 0x02, 0x06, 0x02, 0x00, 0x02, 0xf8,
-	0x06, 0x66, 0x02, 0xf8, 0x02, 0x00, 0x02, 0x18,
-	0x06, 0x66, 0x02, 0x86, 0x02, 0x00, 0x02, 0xfe,
-	0x06, 0x66, 0x02, 0x06, 0x0a, 0x00, 0x02, 0xfe,
-	0x02, 0x80, 0x02, 0x60, 0x02, 0x80, 0x02, 0xfe,
-	0x02, 0x00, 0x02, 0xf8, 0x06, 0x66, 0x02, 0xf8,
-	0x02, 0x00, 0x04, 0x06, 0x02, 0xfe, 0x04, 0x06,
-	0x02, 0x00, 0x04, 0x06, 0x02, 0xfe, 0x04, 0x06,
-	0x02, 0x00, 0x02, 0x07, 0x0a, 0x00, 0x02, 0x07,
-	0x08, 0x06, 0x02, 0x00, 0x02, 0x07, 0x08, 0x06,
-	0x02, 0x00, 0x02, 0x07, 0x06, 0x00, 0x02, 0x07,
-	0x02, 0x00, 0x08, 0x06, 0x02, 0x01, 0x02, 0x00,
-	0x02, 0x07, 0x08, 0x06, 0x0a, 0x00, 0x02, 0x07,
-	0x02, 0x01, 0x02, 0x00, 0x02, 0x01, 0x02, 0x07,
-	0x02, 0x00, 0x02, 0x07, 0x06, 0x00, 0x02, 0x07,
-	0x02, 0x00, 0x04, 0x06, 0x02, 0x07, 0x04, 0x06,
-	0x06, 0x00, 0x02, 0x07, 0x0a, 0x00, 0x04, 0x18,
-	0x02, 0xf8, 0x04, 0x18, 0x02, 0x00, 0x02, 0xf8,
-	0x02, 0x60, 0x02, 0x80, 0x02, 0x00, 0x02, 0xf8,
-	0x02, 0x00, 0x02, 0x60, 0x06, 0x98, 0x02, 0x18,
-	0x02, 0x00, 0x04, 0x18, 0x02, 0xf8, 0x04, 0x18,
-	0x02, 0x00, 0x02, 0xe0, 0x06, 0x98, 0x02, 0xe0,
-	0x02, 0x00, 0x02, 0xf8, 0x0a, 0x00, 0x02, 0xf8,
-	0x0a, 0x00, 0x04, 0x18, 0x02, 0xf8, 0x04, 0x18,
-	0x02, 0x00, 0x02, 0xf8, 0x02, 0x60, 0x02, 0x80,
-	0x02, 0x00, 0x02, 0xf8, 0x02, 0x00, 0x02, 0xe0,
-	0x02, 0x18, 0x06, 0x98, 0x0a, 0x00, 0x04, 0x18,
-	0x02, 0x1f, 0x04, 0x18, 0x02, 0x00, 0x02, 0x1f,
-	0x02, 0x00, 0x02, 0x01, 0x02, 0x06, 0x02, 0x1f,
-	0x02, 0x00, 0x02, 0x18, 0x06, 0x19, 0x02, 0x06,
-	0x06, 0x00, 0x02, 0x1f, 0x06, 0x00, 0x02, 0x1f,
-	0x06, 0x01, 0x02, 0x1f, 0x02, 0x00, 0x02, 0x1f,
-	0x08, 0x18, 0x02, 0x00, 0x02, 0x1f, 0x08, 0x18,
-	0x02, 0x00, 0x04, 0x18, 0x02, 0x1f, 0x04, 0x18,
-	0x02, 0x00, 0x02, 0x1f, 0x02, 0x00, 0x02, 0x01,
-	0x02, 0x06, 0x02, 0x1f, 0x02, 0x00, 0x02, 0x07,
-	0x02, 0x18, 0x04, 0x19, 0x02, 0x1f, 0x3a, 0x00,
-	0x02, 0xc0, 0x06, 0x30, 0x02, 0xc0, 0x02, 0x00,
-	0x02, 0xc0, 0x08, 0x30, 0x6a, 0x00, 0x02, 0x0f,
-	0x06, 0x30, 0x02, 0x0f, 0x02, 0x00, 0x02, 0x30,
-	0x06, 0x33, 0x02, 0x0c, 0xb5, 0x00,
 };
 
 static int match_gpiochip_label(struct gpio_chip *chip, void *data)
@@ -590,6 +501,226 @@ static int oled_initialize(void)
 	return oled_write(0x00, direction, sizeof(direction));
 }
 
+/*
+ * Install and error screens are drawn here with the 5-pixel font of
+ * onekvm-extension-nanokvm-oled (canvas.hpp, font width 4): letters are
+ * four pixels wide, digits and symbols three, one pixel apart.
+ */
+static const u8 latin_font4[26][5] = {
+	{ 6, 9, 15, 9, 9 },   { 14, 9, 14, 9, 14 }, { 7, 8, 8, 8, 7 },
+	{ 14, 9, 9, 9, 14 },  { 15, 8, 14, 8, 15 }, { 15, 8, 14, 8, 8 },
+	{ 7, 8, 11, 9, 7 },   { 9, 9, 15, 9, 9 },   { 15, 2, 2, 2, 15 },
+	{ 1, 1, 1, 9, 6 },    { 9, 10, 12, 10, 9 }, { 8, 8, 8, 8, 15 },
+	{ 9, 15, 15, 9, 9 },  { 9, 13, 11, 9, 9 },  { 6, 9, 9, 9, 6 },
+	{ 14, 9, 14, 8, 8 },  { 6, 9, 9, 11, 7 },   { 14, 9, 14, 10, 9 },
+	{ 7, 8, 6, 1, 14 },   { 15, 2, 2, 2, 2 },   { 9, 9, 9, 9, 6 },
+	{ 9, 9, 9, 6, 6 },    { 9, 9, 15, 15, 9 },  { 9, 9, 6, 9, 9 },
+	{ 9, 9, 6, 2, 2 },    { 15, 1, 2, 4, 15 },
+};
+
+static const u8 digit_font3[10][5] = {
+	{ 7, 5, 5, 5, 7 }, { 2, 6, 2, 2, 7 }, { 6, 1, 7, 4, 7 },
+	{ 6, 1, 3, 1, 6 }, { 5, 5, 7, 1, 1 }, { 7, 4, 6, 1, 6 },
+	{ 3, 4, 7, 5, 7 }, { 7, 1, 2, 2, 2 }, { 7, 5, 7, 5, 7 },
+	{ 7, 5, 7, 1, 6 },
+};
+
+static const u8 blank_glyph[5];
+static const u8 slash_glyph[5] = { 1, 1, 2, 4, 4 };
+static const u8 unknown_glyph[5] = { 6, 1, 2, 0, 2 };
+
+#define ONEKVM_INSTALL_STEPS 7
+
+/* Step N names the work started by `nanokvm_splash install N`. */
+static const char * const install_step_names[ONEKVM_INSTALL_STEPS + 1] = {
+	"", "READ SYSTEM", "READ BOOT", "PARTITIONS", "WRITE BOOT",
+	"WRITE SYSTEM", "USER DATA", "FINISHING",
+};
+
+static const u8 *glyph_for(char character, int *width)
+{
+	if (character >= 'A' && character <= 'Z') {
+		*width = 4;
+		return latin_font4[character - 'A'];
+	}
+	*width = 3;
+	if (character >= '0' && character <= '9')
+		return digit_font3[character - '0'];
+	if (character == ' ')
+		return blank_glyph;
+	if (character == '/')
+		return slash_glyph;
+	return unknown_glyph;
+}
+
+static int text_width(const char *text, int scale)
+{
+	int width = 0;
+	int glyph_width;
+
+	for (; *text; ++text) {
+		glyph_for(*text, &glyph_width);
+		width += (glyph_width + 1) * scale;
+	}
+	return width ? width - scale : 0;
+}
+
+static void draw_text(u8 *frame, int width, int height, int y,
+		      const char *text, int scale)
+{
+	int x = (width - text_width(text, scale)) / 2;
+
+	for (; *text; ++text) {
+		int glyph_width;
+		const u8 *rows = glyph_for(*text, &glyph_width);
+		int row;
+		int column;
+
+		for (row = 0; row < 5; ++row)
+			for (column = 0; column < glyph_width; ++column) {
+				int oy;
+				int ox;
+
+				if (!(rows[row] & BIT(glyph_width - 1 - column)))
+					continue;
+				for (oy = 0; oy < scale; ++oy)
+					for (ox = 0; ox < scale; ++ox) {
+						int px = x + column * scale + ox;
+						int py = y + row * scale + oy;
+
+						if (px < 0 || px >= width ||
+						    py < 0 || py >= height)
+							continue;
+						frame[(py / 8) * width + px] |=
+							BIT(py % 8);
+					}
+			}
+		x += (glyph_width + 1) * scale;
+	}
+}
+
+static bool state_error;
+static unsigned int state_step;
+static bool display_running;
+static bool recovery_blink;
+static bool rtos_live;
+static void __iomem *rtos_shm;
+static int screen_width;
+static int screen_height;
+static u8 screen_frame[ONEKVM_OLED_MAX_FRAME_SIZE];
+
+/* Same rows as the official install canvases: PCIe y=6/14/22, Cube 2x. */
+static size_t render_state(void)
+{
+	static const int pcie_rows[] = { 6, 14, 22 };
+	static const int cube_rows[] = { 9, 27, 44 };
+	const int *rows = screen_width == ONEKVM_CUBE_OLED_WIDTH ?
+				  cube_rows : pcie_rows;
+	int scale = screen_width == ONEKVM_CUBE_OLED_WIDTH ? 2 : 1;
+	size_t size = (size_t)screen_width * screen_height / 8;
+	char progress[16];
+	const char *lines[3];
+
+	snprintf(progress, sizeof(progress), "STEP %u/%u", state_step,
+		 ONEKVM_INSTALL_STEPS);
+	if (state_error) {
+		lines[0] = "SETUP FAILED";
+		lines[1] = state_step ? progress : "CHECK SD CARD";
+		lines[2] = state_step ? "CHECK SD CARD" : "";
+	} else {
+		lines[0] = "INSTALLING";
+		lines[1] = state_step ? progress : "PLEASE WAIT";
+		lines[2] = install_step_names[state_step];
+	}
+	memset(screen_frame, 0, sizeof(screen_frame));
+	draw_text(screen_frame, screen_width, screen_height, rows[0],
+		  lines[0], scale);
+	draw_text(screen_frame, screen_width, screen_height, rows[1],
+		  lines[1], scale);
+	draw_text(screen_frame, screen_width, screen_height, rows[2],
+		  lines[2], scale);
+	return size;
+}
+
+#define ONEKVM_OLED_SHM_PHYS     0x8FFF0000UL
+#define ONEKVM_OLED_SHM_SIZE     0x1000
+#define ONEKVM_OLED_SHM_MAGIC    0x44454C4FU
+#define ONEKVM_OLED_SHM_SEQ      4
+#define ONEKVM_OLED_SHM_ACK      8
+#define ONEKVM_OLED_SHM_CMD      12
+#define ONEKVM_OLED_SHM_VARIANT  16
+#define ONEKVM_OLED_SHM_WIDTH    20
+#define ONEKVM_OLED_SHM_HEIGHT   24
+#define ONEKVM_OLED_SHM_FRAME    32
+#define ONEKVM_OLED_SHM_FRAME_MAX 1024
+#define ONEKVM_OLED_SHM_LOCK     (ONEKVM_OLED_SHM_FRAME + ONEKVM_OLED_SHM_FRAME_MAX)
+#define ONEKVM_OLED_LOCK_LINUX   1
+#define ONEKVM_OLED_CMD_FRAME    1
+#define ONEKVM_OLED_CMD_BOOT     2
+#define ONEKVM_OLED_CMD_RECOVERY 4
+#define ONEKVM_OLED_CMD_OFF      5
+
+/* Post one command to the C906L display service and wait for its ACK. */
+static int rtos_post(u32 cmd, const u8 *frame, size_t size)
+{
+	unsigned int spins = 100000;
+	unsigned long deadline;
+	u32 ack;
+	u32 seq;
+
+	if (!rtos_shm || size > ONEKVM_OLED_SHM_FRAME_MAX)
+		return -EINVAL;
+	while (spins-- && readl(rtos_shm + ONEKVM_OLED_SHM_LOCK))
+		cpu_relax();
+	writel(ONEKVM_OLED_LOCK_LINUX, rtos_shm + ONEKVM_OLED_SHM_LOCK);
+	if (frame) {
+		memcpy_toio(rtos_shm + ONEKVM_OLED_SHM_FRAME, frame, size);
+		memset_io(rtos_shm + ONEKVM_OLED_SHM_FRAME + size, 0,
+			  ONEKVM_OLED_SHM_FRAME_MAX - size);
+	}
+	writel(cmd, rtos_shm + ONEKVM_OLED_SHM_CMD);
+	ack = readl(rtos_shm + ONEKVM_OLED_SHM_ACK);
+	seq = readl(rtos_shm + ONEKVM_OLED_SHM_SEQ) + 1;
+	if (!seq)
+		seq = 1;
+	if (seq == ack && !++seq)
+		seq = 1;
+	wmb();
+	writel(seq, rtos_shm + ONEKVM_OLED_SHM_SEQ);
+	writel(0, rtos_shm + ONEKVM_OLED_SHM_LOCK);
+	/* Warm resets can retain the magic from a previous OneKVM FIP even
+	 * when the factory FIP starts no C906L image. Require a fresh ACK.
+	 */
+	deadline = jiffies + msecs_to_jiffies(1000);
+	do {
+		if (readl(rtos_shm + ONEKVM_OLED_SHM_ACK) == seq)
+			return 0;
+		usleep_range(1000, 2000);
+	} while (time_before(jiffies, deadline));
+	return -ETIMEDOUT;
+}
+
+/* Draw the current state. The caller holds display_lock. */
+static int show_state_locked(void)
+{
+	size_t size = render_state();
+	int ret;
+
+	if (rtos_live) {
+		ret = rtos_post(ONEKVM_OLED_CMD_FRAME, screen_frame, size);
+	} else {
+		if (blink_is_off) {
+			ret = oled_command(0xaf);
+			if (ret)
+				return ret;
+		}
+		ret = oled_show(screen_frame, size, false);
+	}
+	if (!ret)
+		blink_is_off = false;
+	return ret;
+}
+
 static void onekvm_blink_work(struct work_struct *work)
 {
 	unsigned long delay;
@@ -597,24 +728,32 @@ static void onekvm_blink_work(struct work_struct *work)
 
 	(void)work;
 	mutex_lock(&display_lock);
-	if (!display_ready) {
+	if ((!display_running || state_error) && !recovery_blink) {
 		mutex_unlock(&display_lock);
 		return;
 	}
 
 	if (blink_is_off) {
-		ret = oled_command(0xaf);
-		if (!ret)
-			blink_is_off = false;
+		if (recovery_blink) {
+			ret = oled_command(0xaf);
+			if (!ret)
+				blink_is_off = false;
+		} else {
+			ret = show_state_locked();
+		}
 		delay = msecs_to_jiffies(ONEKVM_BLINK_PERIOD_MS -
 					 ONEKVM_BLINK_OFF_MS);
 	} else {
-		ret = oled_command(0xae);
+		ret = rtos_live ? rtos_post(ONEKVM_OLED_CMD_OFF, NULL, 0) :
+				  oled_command(0xae);
 		if (!ret)
 			blink_is_off = true;
 		delay = msecs_to_jiffies(ONEKVM_BLINK_OFF_MS);
 	}
-	if (ret)
+	if (ret && rtos_live)
+		pr_warn_ratelimited("onekvm-installing-oled: C906L blink failed: %d\n",
+				    ret);
+	else if (ret)
 		pr_warn_ratelimited("onekvm-installing-oled: blink failed: %d stage=%s index=%zu pinmux=%08x/%08x/%08x lines=%d/%d/%d enable-dir=%d\n",
 				    ret, last_i2c_stage, last_i2c_index,
 				    readl(onekvm_pinmux + ONEKVM_PINMUX_SCL),
@@ -627,6 +766,66 @@ static void onekvm_blink_work(struct work_struct *work)
 	mutex_unlock(&display_lock);
 	schedule_delayed_work(&blink_work, delay);
 }
+
+static int parse_state(const char *value, bool *error, unsigned int *step)
+{
+	char kind[8];
+	unsigned int number = 0;
+	int fields = sscanf(value, "%7s %u", kind, &number);
+
+	if (fields < 1 || number > ONEKVM_INSTALL_STEPS)
+		return -EINVAL;
+	if (!strcmp(kind, "install"))
+		*error = false;
+	else if (!strcmp(kind, "error"))
+		*error = true;
+	else
+		return -EINVAL;
+	*step = number;
+	return 0;
+}
+
+/*
+ * /sys/module/onekvm_installing_oled/parameters/state takes "install N"
+ * while step N runs and "error N" when setup stops; N is 0 before step 1.
+ * Install screens blink every three seconds. Error screens stay on.
+ */
+static int state_set(const char *value, const struct kernel_param *kp)
+{
+	bool error;
+	unsigned int step;
+	int ret;
+
+	(void)kp;
+	ret = parse_state(value, &error, &step);
+	if (ret)
+		return ret;
+	if (error)
+		cancel_delayed_work_sync(&blink_work);
+	mutex_lock(&display_lock);
+	state_error = error;
+	state_step = step;
+	ret = display_running ? show_state_locked() : 0;
+	mutex_unlock(&display_lock);
+	if (!error && display_running)
+		mod_delayed_work(system_wq, &blink_work,
+				 msecs_to_jiffies(ONEKVM_BLINK_PERIOD_MS));
+	return ret;
+}
+
+static int state_get(char *buffer, const struct kernel_param *kp)
+{
+	(void)kp;
+	return sysfs_emit(buffer, "%s %u\n", state_error ? "error" : "install",
+			  state_step);
+}
+
+static const struct kernel_param_ops state_ops = {
+	.set = state_set,
+	.get = state_get,
+};
+module_param_cb(state, &state_ops, NULL, 0644);
+MODULE_PARM_DESC(state, "Install screen: 'install N' or 'error N' (N = 0-7)");
 
 static void restore_hardware_state(void)
 {
@@ -724,53 +923,36 @@ fail:
 	return ret;
 }
 
-#define ONEKVM_OLED_SHM_PHYS  0x8FFF0000UL
-#define ONEKVM_OLED_SHM_MAGIC 0x44454C4FU
-#define ONEKVM_OLED_CMD_INSTALL  3
-#define ONEKVM_OLED_CMD_RECOVERY 4
-
-static int onekvm_rtos_post(u32 cmd)
+/* Use a responsive C906L display service; return -ENODEV to probe I2C. */
+static int rtos_open(void)
 {
-	void __iomem *map;
-	unsigned long deadline;
-	u32 ack;
-	u32 magic;
-	u32 seq;
+	int width;
+	int height;
 
-	map = ioremap(ONEKVM_OLED_SHM_PHYS, 0x1000);
-	if (!map)
+	rtos_shm = ioremap(ONEKVM_OLED_SHM_PHYS, ONEKVM_OLED_SHM_SIZE);
+	if (!rtos_shm)
 		return -ENOMEM;
-	magic = readl(map);
-	if (magic != ONEKVM_OLED_SHM_MAGIC) {
-		iounmap(map);
+	width = readl(rtos_shm + ONEKVM_OLED_SHM_WIDTH);
+	height = readl(rtos_shm + ONEKVM_OLED_SHM_HEIGHT);
+	if (readl(rtos_shm) != ONEKVM_OLED_SHM_MAGIC ||
+	    !readl(rtos_shm + ONEKVM_OLED_SHM_VARIANT) ||
+	    !((width == ONEKVM_PCIE_OLED_WIDTH && height == 32) ||
+	      (width == ONEKVM_CUBE_OLED_WIDTH && height == 64))) {
+		iounmap(rtos_shm);
+		rtos_shm = NULL;
 		return -ENODEV;
 	}
-	writel(cmd, map + 12);
-	ack = readl(map + 8);
-	seq = readl(map + 4) + 1;
-	if (!seq)
-		seq = 1;
-	if (seq == ack) {
-		++seq;
-		if (!seq)
-			seq = 1;
-	}
-	writel(seq, map + 4);
-	/* Warm resets can retain the magic from a previous OneKVM FIP even
-	 * when the factory FIP starts no C906L image. Require a fresh ACK
-	 * before treating shared memory as a live display service.
-	 */
-	deadline = jiffies + msecs_to_jiffies(1000);
-	do {
-		if (readl(map + 8) == seq) {
-			iounmap(map);
-			return 0;
-		}
-		usleep_range(1000, 2000);
-	} while (time_before(jiffies, deadline));
-	iounmap(map);
-	pr_info("onekvm-installing-oled: C906L did not acknowledge; probing OLED hardware\n");
-	return -ENODEV;
+	screen_width = width;
+	screen_height = height;
+	return 0;
+}
+
+static void rtos_close(void)
+{
+	if (rtos_shm)
+		iounmap(rtos_shm);
+	rtos_shm = NULL;
+	rtos_live = false;
 }
 
 static int __init onekvm_installing_oled_init(void)
@@ -779,62 +961,57 @@ static int __init onekvm_installing_oled_init(void)
 		&cube_oled_profile,
 		&pcie_oled_profile,
 	};
-	const u8 *frame;
-	size_t frame_size;
-	bool frame_is_rle;
-	const char *canvas_name;
 	bool recovery_mode;
 	size_t profile_index;
-	size_t profile_count;
 	int attempt;
 	int ret;
-	u32 rtos_cmd;
 
-	if (!strcmp(display_mode, "install"))
-		rtos_cmd = ONEKVM_OLED_CMD_INSTALL;
-	else if (!strcmp(display_mode, "recovery"))
-		rtos_cmd = ONEKVM_OLED_CMD_RECOVERY;
-	else
-		rtos_cmd = 0;
-
-	if (rtos_cmd) {
-		ret = onekvm_rtos_post(rtos_cmd);
-		if (!ret) {
-			pr_info("onekvm-installing-oled: posted %s canvas to C906L\n",
-				display_mode);
-			return 0;
-		}
-		if (ret != -ENODEV) {
-			pr_err("onekvm-installing-oled: C906L post failed: %d\n",
-			       ret);
-			return ret;
-		}
-	}
-
-	if (!strcmp(display_mode, "install")) {
-		recovery_mode = false;
-		frame = NULL;
-		frame_size = 0;
-		frame_is_rle = false;
-		canvas_name = "Install OS";
-	} else if (!strcmp(display_mode, "recovery")) {
+	if (!strcmp(display_mode, "recovery")) {
 		recovery_mode = true;
-		frame = NULL;
-		frame_size = 0;
-		frame_is_rle = false;
-		canvas_name = "Recovery";
+	} else if (!strcmp(display_mode, "install") ||
+		   !strcmp(display_mode, "error")) {
+		recovery_mode = false;
+		state_error = !strcmp(display_mode, "error");
+		if (initial_step > ONEKVM_INSTALL_STEPS)
+			return -EINVAL;
+		state_step = initial_step;
 	} else {
 		pr_err("onekvm-installing-oled: invalid mode '%s'\n",
 		       display_mode);
 		return -EINVAL;
 	}
 
+	if (!rtos_open()) {
+		rtos_live = true;
+		mutex_lock(&display_lock);
+		ret = recovery_mode ?
+			      rtos_post(ONEKVM_OLED_CMD_RECOVERY, NULL, 0) :
+			      show_state_locked();
+		if (!ret && !recovery_mode)
+			display_running = true;
+		mutex_unlock(&display_lock);
+		if (!ret) {
+			if (display_running && !state_error)
+				schedule_delayed_work(&blink_work,
+						      msecs_to_jiffies(ONEKVM_BLINK_PERIOD_MS));
+			pr_info("onekvm-installing-oled: posted %s screen to C906L\n",
+				display_mode);
+			return 0;
+		}
+		rtos_close();
+		if (ret != -ETIMEDOUT) {
+			pr_err("onekvm-installing-oled: C906L post failed: %d\n",
+			       ret);
+			return ret;
+		}
+		pr_info("onekvm-installing-oled: C906L did not acknowledge; probing OLED hardware\n");
+	}
+
 	ret = prepare_hardware();
 	if (ret)
 		goto fail;
 
-	profile_count = ARRAY_SIZE(profiles);
-	for (profile_index = 0; profile_index < profile_count;
+	for (profile_index = 0; profile_index < ARRAY_SIZE(profiles);
 	     ++profile_index) {
 		active_profile = profiles[profile_index];
 		for (attempt = 0; attempt < 4; ++attempt) {
@@ -851,38 +1028,38 @@ static int __init onekvm_installing_oled_init(void)
 		ret = -ENODEV;
 		goto fail;
 	}
+	screen_width = active_profile->width;
+	screen_height = active_profile->pages * 8;
 
-	if (active_profile == &cube_oled_profile) {
-		if (recovery_mode) {
-			frame = cube_recovery_frame_rle;
-			frame_size = ARRAY_SIZE(cube_recovery_frame_rle);
-		} else {
-			frame = cube_installing_frame_rle;
-			frame_size = ARRAY_SIZE(cube_installing_frame_rle);
-		}
-		frame_is_rle = true;
-	} else {
-		if (recovery_mode) {
-			frame = pcie_recovery_frame;
-			frame_size = ARRAY_SIZE(pcie_recovery_frame);
-		} else {
-			frame = pcie_installing_frame;
-			frame_size = ARRAY_SIZE(pcie_installing_frame);
-		}
-	}
 	ret = oled_initialize();
 	if (ret)
 		goto fail;
-	ret = oled_show(frame, frame_size, frame_is_rle);
+	mutex_lock(&display_lock);
+	if (recovery_mode) {
+		if (active_profile == &cube_oled_profile)
+			ret = oled_show(cube_recovery_frame_rle,
+					ARRAY_SIZE(cube_recovery_frame_rle), true);
+		else
+			ret = oled_show(pcie_recovery_frame,
+					ARRAY_SIZE(pcie_recovery_frame), false);
+	} else {
+		ret = show_state_locked();
+	}
+	if (!ret) {
+		display_ready = true;
+		display_running = !recovery_mode;
+		recovery_blink = recovery_mode;
+		blink_is_off = false;
+	}
+	mutex_unlock(&display_lock);
 	if (ret)
 		goto fail;
 
-	display_ready = true;
-	blink_is_off = false;
-	schedule_delayed_work(&blink_work,
-			      msecs_to_jiffies(ONEKVM_BLINK_PERIOD_MS));
-	pr_info("onekvm-installing-oled: %s %s canvas active (3 second blink)\n",
-		active_profile->name, canvas_name);
+	if (recovery_mode || !state_error)
+		schedule_delayed_work(&blink_work,
+				      msecs_to_jiffies(ONEKVM_BLINK_PERIOD_MS));
+	pr_info("onekvm-installing-oled: %s %s screen active\n",
+		active_profile->name, display_mode);
 	return 0;
 
 fail:
@@ -899,9 +1076,17 @@ static void __exit onekvm_installing_oled_exit(void)
 	static const u8 off_sequence[] = { 0x8d, 0x10, 0xae };
 	static const u8 blank[ONEKVM_OLED_MAX_FRAME_SIZE];
 
+	mutex_lock(&display_lock);
+	display_running = false;
+	recovery_blink = false;
+	mutex_unlock(&display_lock);
 	cancel_delayed_work_sync(&blink_work);
 	mutex_lock(&display_lock);
-	if (display_ready) {
+	if (rtos_live) {
+		/* Hand the panel back to the boot animation. */
+		rtos_post(ONEKVM_OLED_CMD_BOOT, NULL, 0);
+		rtos_close();
+	} else if (display_ready) {
 		if (blink_is_off)
 			oled_command(0xaf);
 		oled_show(blank, active_profile->width * active_profile->pages,
@@ -920,6 +1105,6 @@ static void __exit onekvm_installing_oled_exit(void)
 module_init(onekvm_installing_oled_init);
 module_exit(onekvm_installing_oled_exit);
 
-MODULE_DESCRIPTION("OneKVM NanoKVM install and recovery OLED indicator");
+MODULE_DESCRIPTION("OneKVM NanoKVM install, setup error and recovery OLED screens");
 MODULE_AUTHOR("OneKVM");
 MODULE_LICENSE("GPL");
