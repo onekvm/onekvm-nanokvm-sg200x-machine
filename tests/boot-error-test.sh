@@ -72,12 +72,12 @@ check_zip "$records/try-1.zip" \
 [ ! -e "$records/try-1" ]
 [ ! -e "$records/.try-1" ]
 [ ! -e "$work/boot/onekvm-boot-error.txt" ]
-if (nanokvm_die "rootfs A is not SquashFS; refusing initialization"); then
+if (nanokvm_die "rootfs A is neither SquashFS nor EROFS; refusing initialization"); then
     echo 'second pause continued' >&2
     exit 1
 fi
 [ ! -e "$records/try-2" ]
-check_zip "$records/try-2.zip" 'reason: rootfs A is not SquashFS; refusing initialization'
+check_zip "$records/try-2.zip" 'reason: rootfs A is neither SquashFS nor EROFS; refusing initialization'
 check_zip "$records/try-1.zip" 'reason: userdata contains ext4; refusing destructive migration'
 if check_zip "$records/try-1.zip" 'refusing initialization' 2>/dev/null; then
     echo 'first record was replaced' >&2

@@ -31,7 +31,7 @@ static void check_rotation(size_t stride)
 static void check_error_message(void)
 {
     uint16_t plain[WIDTH * HEIGHT], text[WIDTH * HEIGHT];
-    const char *message = "OneKVM NanoKVM storage migration: rootfs A is not SquashFS; refusing initialization";
+    const char *message = "OneKVM NanoKVM storage migration: rootfs A is neither SquashFS nor EROFS; refusing initialization";
     render(plain, 0, 2, &labels_en, NULL);
     render(text, 0, 2, &labels_en, message);
     assert(memcmp(plain, text, sizeof(plain)) != 0);

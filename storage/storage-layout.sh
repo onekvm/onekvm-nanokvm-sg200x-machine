@@ -86,7 +86,7 @@ onekvm_storage_select() {
         *) onekvm_storage_error "root device and boot slot disagree"; return 1 ;;
     esac
     root_a=${disk}p2; root_b=${disk}p3; userdata=${disk}p4
-    # Cube and both Pro media use the same 128 MiB SquashFS slot capacity.
+    # Cube and both Pro media use the same 128 MiB read-only root slot capacity.
     root_slot_size=262144
     root_b_gap=0
     case "$storage_media" in

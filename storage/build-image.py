@@ -123,6 +123,20 @@ def append_trailer(output, profile, payload_size, build_id, network_policy=False
     assert Path(output).stat().st_size == payload_size + TRAILER_SIZE
     return payload_sha256, full_sha256
 
+def root_image(rootfs):
+    """Return (rootfstype, used bytes) of a SquashFS or EROFS root image."""
+    with open(rootfs, 'rb') as source:
+        header = source.read(1024 + 128)
+    if header[:4] == b'hsqs':
+        return 'squashfs', struct.unpack_from('<Q', header, 40)[0]
+    if len(header) == 1024 + 128 and struct.unpack_from('<I', header, 1024)[0] == 0xE0F5E1E2:
+        blkszbits = header[1024 + 12]
+        # 48-bit block counts (feature_incompat 0x80) are not used for slots.
+        assert not struct.unpack_from('<I', header, 1024 + 80)[0] & 0x80, 'EROFS 48-bit layout'
+        return 'erofs', struct.unpack_from('<I', header, 1024 + 36)[0] << blkszbits
+    raise ValueError('rootfs is neither SquashFS nor EROFS')
+
+
 def build(profile, boot, rootfs, output, build_id, raw=(), network_policy=False):
     disk_id, boot_at, target_boot_size, target_root_at, slot_size, root_b, data_at = LAYOUTS[profile]
     boot_bytes = Path(boot).stat().st_size
@@ -138,11 +152,10 @@ def build(profile, boot, rootfs, output, build_id, raw=(), network_policy=False)
         root_at = ((boot_at + boot_size + 2047) // 2048) * 2048
     root_bytes = Path(rootfs).stat().st_size
     if not 0 < root_bytes <= slot_size * 512:
-        raise ValueError('SquashFS is %d bytes; rootfs slot capacity is %d bytes (128 MiB)' %
+        raise ValueError('rootfs is %d bytes; rootfs slot capacity is %d bytes (128 MiB)' %
                          (root_bytes, slot_size * 512))
-    with open(rootfs, 'rb') as source:
-        header = source.read(48)
-    assert header[:4] == b'hsqs' and 4096 <= struct.unpack_from('<Q', header, 40)[0] <= root_bytes
+    rootfstype, root_used = root_image(rootfs)
+    assert 4096 <= root_used <= root_bytes
     root_sectors = (root_bytes + 511) // 512
     payloads = [(Path(boot), boot_at * 512), (Path(rootfs), root_at * 512)]
     if profile == 'pro-emmc':
@@ -188,7 +201,7 @@ def build(profile, boot, rootfs, output, build_id, raw=(), network_policy=False)
                     metadata_version=TRAILER_VERSION, network_policy=int(network_policy),
                     payload_sha256=payload_sha256, image_sha256=image_sha256,
                     file_sha256=file_sha256,
-                    partition_table=table, rootfstype='squashfs', overlay='shared-upper',
+                    partition_table=table, rootfstype=rootfstype, overlay='shared-upper',
                     first_boot_partitions=4 if table == 'cmdline' else 2, target_partitions=4,
                     rootfs_bytes=root_bytes, rootfs_slot_bytes=slot_size * 512,
                     rootfs_sha256=digest(rootfs), boot_sha256=digest(boot),
