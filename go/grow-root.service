@@ -1,7 +1,10 @@
 [Unit]
 Description=Expand the NanoKVM Go SD root filesystem
+# Runs before the early persistence/firstboot chain, so no implicit basic.target.
+DefaultDependencies=no
 After=local-fs.target
-Before=onekvm-persistence.service
+Before=onekvm-persistence.service shutdown.target
+Conflicts=shutdown.target
 ConditionPathExists=!/run/onekvm/nfs-wifi
 
 [Service]
