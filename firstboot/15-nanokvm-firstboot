@@ -378,34 +378,65 @@ nanokvm_stop_oled() {
     fi
 }
 
+# Read COUNT little-endian 16-bit words at byte OFFSET of DEVICE into
+# root_words, lowest word first.
+nanokvm_read_words() {
+    set -- $(dd if="$1" bs=1 skip="$2" count=$(($3 * 2)) 2>/dev/null |
+        od -d | sed -n '1p')
+    shift
+    case "$*" in
+        ''|*[!0-9\ ]*) nanokvm_die "could not read the rootfs A image header" ;;
+    esac
+    root_words=$*
+}
+
+# Bytes used by the read-only root image in DEVICE of TYPE. Images stay below
+# 4 GiB. SquashFS: bytes_used, le64 at offset 40. EROFS: blocks_lo (le32 at
+# superblock + 36) << blkszbits (u8 at superblock + 12), superblock at 1024;
+# 48-bit block counts are rejected.
+nanokvm_root_bytes() {
+    case "$2" in
+        squashfs)
+            nanokvm_read_words "$1" 40 4
+            set -- $root_words
+            [ "$#" -eq 4 ] && [ "$3" -eq 0 ] && [ "$4" -eq 0 ] ||
+                nanokvm_die "rootfs A SquashFS size is invalid"
+            rootfs_bytes_used=$(($1 + $2 * 65536))
+            ;;
+        erofs)
+            nanokvm_read_words "$1" 1024 2
+            [ "$root_words" = "57826 57589" ] ||
+                nanokvm_die "rootfs A EROFS superblock is missing"
+            nanokvm_read_words "$1" 1036 1
+            root_blkszbits=$((root_words % 256))
+            nanokvm_read_words "$1" 1104 1
+            [ $((root_words & 128)) -eq 0 ] ||
+                nanokvm_die "rootfs A EROFS uses 48-bit block counts"
+            nanokvm_read_words "$1" 1060 2
+            set -- $root_words
+            [ "$#" -eq 2 ] && [ "$root_blkszbits" -ge 9 ] && [ "$root_blkszbits" -le 16 ] ||
+                nanokvm_die "rootfs A EROFS size is invalid"
+            [ "$2" -lt $((1 << (16 - root_blkszbits))) ] ||
+                nanokvm_die "rootfs A EROFS size exceeds 4 GiB"
+            rootfs_bytes_used=$((($1 + $2 * 65536) << root_blkszbits))
+            ;;
+        *) nanokvm_die "rootfs A is neither SquashFS nor EROFS" ;;
+    esac
+}
+
 nanokvm_copy_root_to_ram() {
     mkdir -p "$migration_dir"
-    # SquashFS stores bytes_used as a little-endian 64-bit value at offset 40.
-    # NanoKVM images are below 4 GiB, so the upper two 16-bit words must be 0.
-    set -- $(dd if="$root_a" bs=1 skip=40 count=8 2>/dev/null |
-        od -d | sed -n '1p')
-    [ "$#" -eq 5 ] ||
-        nanokvm_die "could not read the rootfs A SquashFS size"
-    rootfs_word0=$2
-    rootfs_word1=$3
-    rootfs_word2=$4
-    rootfs_word3=$5
-    case "$rootfs_word0:$rootfs_word1:$rootfs_word2:$rootfs_word3" in
-        *[!0-9:]*) nanokvm_die "rootfs A SquashFS size is invalid" ;;
-    esac
-    [ "$rootfs_word2" -eq 0 ] && [ "$rootfs_word3" -eq 0 ] ||
-        nanokvm_die "rootfs A SquashFS size exceeds 4 GiB"
-    rootfs_bytes_used=$((rootfs_word0 + rootfs_word1 * 65536))
+    nanokvm_root_bytes "$root_a" "$root_a_type"
     [ "$rootfs_bytes_used" -ge 4096 ] &&
         [ "$rootfs_bytes_used" -le "$root_source_bytes" ] &&
         [ "$rootfs_bytes_used" -le "$root_slot_bytes" ] ||
-        nanokvm_die "rootfs A SquashFS size is outside the source partition"
+        nanokvm_die "rootfs A image size is outside the source partition"
     root_copy_blocks=$(((rootfs_bytes_used + 1048575) / 1048576))
     root_copy_bytes=$((root_copy_blocks * 1048576))
-    # The installer carrier partition is exactly the SquashFS file size, so
-    # its final 1 MiB read is normally a short record. Installed A/B slots are
+    # The installer carrier partition is exactly the image file size, so its
+    # final 1 MiB read is normally a short record. Installed A/B slots are
     # larger and still copy a complete final block. Both cases are complete as
-    # long as every byte available up to the rounded SquashFS length was read.
+    # long as every byte available up to the rounded image length was read.
     if [ "$root_source_bytes" -lt "$root_copy_bytes" ]; then
         root_copy_bytes=$root_source_bytes
     fi
@@ -434,13 +465,14 @@ nanokvm_copy_root_to_ram() {
         nanokvm_die "rootfs A RAM copy is incomplete"
 }
 
-nanokvm_verify_squashfs() {
+# Both slots are copies of rootfs A, so they carry its filesystem type.
+nanokvm_verify_root() {
     device=$1
     name=$2
     verify_mount="$migration_dir/verify-$name"
     mkdir -p "$verify_mount"
-    mount -t squashfs -o ro "$device" "$verify_mount" ||
-        nanokvm_die "rootfs $name is not a mountable SquashFS"
+    mount -t "$root_a_type" -o ro "$device" "$verify_mount" ||
+        nanokvm_die "rootfs $name is not a mountable $root_a_type root"
     umount "$verify_mount" ||
         nanokvm_die "could not unmount verified rootfs $name"
     rmdir "$verify_mount"
@@ -602,7 +634,7 @@ nanokvm_write_root_slots() {
     dd if="$root_image" of="$root_b" bs=1048576 count="$root_copy_blocks" ||
         nanokvm_die "could not write rootfs B"
     sync
-    nanokvm_verify_squashfs "$root_b" B
+    nanokvm_verify_root "$root_b" B
 
     # The compact carrier's A moves after the larger installed boot partition.
     # Restore both slots from the protected copy.
@@ -610,7 +642,7 @@ nanokvm_write_root_slots() {
     dd if="$root_image" of="$root_a" bs=1048576 count="$root_copy_blocks" ||
         nanokvm_die "could not restore rootfs A"
     sync
-    nanokvm_verify_squashfs "$root_a" A
+    nanokvm_verify_root "$root_a" A
 }
 
 nanokvm_make_userdata() {
@@ -682,7 +714,7 @@ nanokvm_run() {
     loader_type=c
     [ "$storage_media" = nanokvm ] || loader_type=e
     migration_dir=/run/onekvm-firstboot
-    root_image=$migration_dir/rootfs-a.squashfs
+    root_image=$migration_dir/rootfs-a.img
     oled_loaded=false
 
     nanokvm_wait_for_block "$disk" || nanokvm_die "SD card was not found"
@@ -712,9 +744,9 @@ nanokvm_run() {
         nanokvm_die "SD card is too small for a safe userdata filesystem"
 
     # Destructive migration is allowed only from the OneKVM loader geometry,
-    # the expected rootfs start sector, and a positively identified SquashFS.
-    # The downloadable image deliberately sizes its sole rootfs partition to
-    # the SquashFS file; only the installed A/B layout uses 128 MiB slots.
+    # the expected rootfs start sector, and a positively identified read-only
+    # root. The downloadable image deliberately sizes its sole rootfs partition
+    # to the image file; only the installed A/B layout uses 128 MiB slots.
     nanokvm_partition_matches 1 "$loader_start" "$source_loader_size" ||
         nanokvm_die "unknown loader partition geometry; refusing migration"
     nanokvm_partition_starts_at 2 "$source_root_start" ||
@@ -760,7 +792,10 @@ nanokvm_run() {
     fi
 
     root_a_type=$(nanokvm_filesystem_type "$root_a")
-    [ "$root_a_type" = squashfs ] || nanokvm_die "rootfs A is not SquashFS; refusing initialization"
+    case "$root_a_type" in
+        squashfs|erofs) ;;
+        *) nanokvm_die "rootfs A is neither SquashFS nor EROFS; refusing initialization" ;;
+    esac
     if [ "$storage_media" = pro-emmc ]; then
         # Linux cmdline partitions preserve the entire vendor boot prefix.
         # Never write an MBR or a partition table to this medium.
@@ -771,7 +806,7 @@ nanokvm_run() {
         nanokvm_splash install 5
         dd if="$root_image" of="$root_b" bs=1048576 count="$root_copy_blocks" || nanokvm_die "cannot initialize eMMC rootfs B"
         sync
-        nanokvm_verify_squashfs "$root_b" B
+        nanokvm_verify_root "$root_b" B
         nanokvm_splash install 6
         nanokvm_make_userdata
         nanokvm_splash install 7

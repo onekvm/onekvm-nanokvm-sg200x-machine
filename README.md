@@ -187,8 +187,8 @@ are shared by Cube/PCIe, Pro SD, and Pro eMMC. Profiles define geometry;
 root parameters select the medium and slot, and ambiguous devices are rejected.
 SD installers are compact carriers expanded on first boot. Pro eMMC uses
 cmdline partitions and preserves the vendor bootloader prefix. All profiles
-use 128 MiB SquashFS A/B slots, a shared upper/work, and f2fs for new userdata while retaining
-existing ext4/f2fs. Installed Cube/PCIe and both Pro media use a 128 MiB boot FAT;
+use 128 MiB read-only A/B slots (SquashFS or EROFS), a shared upper/work, and f2fs
+for new userdata while retaining existing ext4/f2fs. Installed Cube/PCIe and both Pro media use a 128 MiB boot FAT;
 SD release carriers size their FAT to the boot files plus headroom. The `bootgrow`
 marker requests a 128 MiB installed FAT: firstboot protects rootfs and all boot
 files (including firstboot configuration) in RAM before recreating partitions;
