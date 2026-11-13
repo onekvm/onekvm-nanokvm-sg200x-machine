@@ -1,0 +1,14 @@
+[Unit]
+Description=Select NanoKVM Go CPU frequency governor
+DefaultDependencies=no
+After=sysinit.target
+Before=onekvm.service
+ConditionPathExists=/sys/devices/system/cpu/cpufreq/policy0/scaling_governor
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'printf ondemand > /sys/devices/system/cpu/cpufreq/policy0/scaling_governor'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=onekvm.service
