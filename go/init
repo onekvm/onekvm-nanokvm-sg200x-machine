@@ -8,6 +8,8 @@ mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t tmpfs -o mode=0755,nodev,nosuid tmpfs /run
 mkdir -p /run/onekvm /newroot /boot-config
+# wpa_cli binds its client socket in /tmp.
+mkdir -p -m 1777 /tmp
 
 fail() {
     echo "OneKVM Go: $*; waiting for hardware watchdog reset"
@@ -61,7 +63,8 @@ if [ -s /boot-config/onekvm/nfs-root ]; then
     wpa_supplicant -B -D nl80211 -i wlan0 -c /run/onekvm/wpa_supplicant.conf \
         -P /run/onekvm/nfs-wpa.pid -C /run/wpa_supplicant || fail 'supplicant failed'
     attempt=0
-    until wpa_cli -i wlan0 status | grep -q '^wpa_state=COMPLETED$'; do
+    # The initramfs has no /var/run, so name the control directory explicitly.
+    until wpa_cli -p /run/wpa_supplicant -i wlan0 status | grep -q '^wpa_state=COMPLETED$'; do
         attempt=$((attempt + 1))
         [ "$attempt" -lt 45 ] || fail 'Wi-Fi association timed out'
         sleep 1
