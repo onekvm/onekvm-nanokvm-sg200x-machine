@@ -89,44 +89,7 @@ EDID checksums and timing bounds are checked, but unusual modes still depend
 on the source GPU, loopout display and capture firmware; their presence does
 not mean every mode has been verified on hardware.
 
-Pro presets, installed from `share/edid/pro/`, also include:
-
-- `factory.edid.bin` — default 1920×1080 @ 60 Hz, identical to `1080p60.edid.bin`
-- `2160p30.edid.bin` — preferred 3840×2160 @ 30 Hz
-- `1080p60.edid.bin` — 1920×1080 @ 60 Hz
-- `1440p30.edid.bin` — 2560×1440 @ 30 Hz
-- `1440p60.edid.bin` — 2560×1440 @ 59.95 Hz (nominal 60 Hz)
-- `720p60.edid.bin` — 1280×720 @ 60 Hz
-- `1080p120.edid.bin` — preferred 1920×1080 @ 120 Hz, with 1080p60 / 720p60 fallbacks
-
-Dedicated resolution presets advertise their preferred timing and lower-bandwidth fallback modes,
-including BIOS-safe established timings and stereo LPCM audio. Pro capture
-supports up to 4K30; select the separate 2160p30 preset to advertise 4K30.
-The default 1080p60 preset does not advertise 4K modes. The HDMI splitter presents
-the host with modes shared by the selected capture EDID and the loopout display.
-The separate 1080p120 preset supports high refresh input; encoding still follows
-the configured stream frame rate (120 Hz input to 60 FPS output is verified on Pro).
-The loopout display must also support 4K30 for that mode to be advertised.
-Stopping SoC capture does not disable the capture bridge or remove its EDID
-from this negotiation. Regenerate the Pro files with
-`python3 tools/generate-pro-edid.py`; the separate directory keeps these modes
-out of the SG2002 machine package.
-
-The Pro machine package ships EDID presets, including 1080p60, for the Web
-EDID settings. Boot never programs the bridge EDID: the bridge keeps its
-existing EDID until the user changes it. The Pro bridge can be LT6911UXC,
-LT6911D or LT6911C; the family driver detects the register ID rather than
-assuming UXC from the board name. Pro's `20-pro-chip-info` hook only links
-`/run/onekvm/lt6911_info` to the driver's `/proc/lt6911_info`, the same shell
-lookup path used by the SG2002 MMF diagnostic cache. A missing driver is not
-an initialization failure.
-
-UXC and D permanent EDID settings are written to the bridge Flash; D uses its
-own Flash sequence. C supports guarded manual EDID management; its Pro erase
-extent still needs hardware validation. UXC temporary RAM application belongs
-to the backend's optional mode and does not change Flash. Unavailable Shadow
-support only disables temporary mode, not permanent Flash management. Pro
-Shadow hardware acceptance is still pending.
+Pro presets and the Pro capture chip hook live in `onekvm-nanokvm-pro-machine`.
 
 Capture chip initialization is shared by Pro and Cube/PCIe. Executable hooks
 in `/usr/libexec/onekvm/capture-chip-init.d/` run in filename order before
