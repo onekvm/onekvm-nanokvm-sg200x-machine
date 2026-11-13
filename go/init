@@ -85,6 +85,7 @@ if [ -s /boot-config/onekvm/nfs-root ]; then
     timeout -s KILL 30 mount -t nfs -o vers=3,tcp,nolock,hard,timeo=30,retrans=2 \
         "$nfs_root" /newroot || fail 'NFS mount failed'
     touch /run/onekvm/nfs-wifi
+    nfs_wifi=1
     printf 'dev\n' >/run/onekvm/boot-slot
     rm -f /newroot/etc/resolv.conf
     ln -s /run/onekvm/resolv.conf /newroot/etc/resolv.conf || fail 'cannot install NFS DNS'
@@ -105,6 +106,14 @@ for dir in dev proc sys run; do
     mkdir -p "/newroot/$dir"
     mount --move "/$dir" "/newroot/$dir" || fail "cannot move $dir"
 done
+if [ -n "$nfs_wifi" ]; then
+    # The supplicant keeps this initramfs as its root. Every later 4-way
+    # handshake (roaming, reconnect, rekey) needs /dev/urandom, so give the
+    # old root its API filesystems again; switch_root leaves mounts alone.
+    mount -t devtmpfs devtmpfs /dev && mount -t proc proc /proc &&
+        mount -t sysfs sysfs /sys && mount --bind /newroot/run /run ||
+        fail 'cannot keep Wi-Fi supplicant filesystems'
+fi
 # Move the feeder's root before switch_root deletes the old initramfs.
 kill -USR1 "$watchdog_pid"
 attempt=0
