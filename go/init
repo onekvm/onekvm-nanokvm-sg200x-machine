@@ -60,8 +60,13 @@ if [ -s /boot-config/onekvm/nfs-root ]; then
         sleep 1
     done
     ip link set wlan0 up || fail 'cannot enable wlan0'
-    wpa_supplicant -B -D nl80211 -i wlan0 -c /run/onekvm/wpa_supplicant.conf \
-        -P /run/onekvm/nfs-wpa.pid -C /run/wpa_supplicant || fail 'supplicant failed'
+    # argv[0] '@' keeps the root's network alive through systemd-shutdown;
+    # killing it would hang the final NFS sync until the watchdog fires.
+    # BusyBox ash searches PATH for the -a name, so exec an absolute path.
+    supplicant=$(command -v wpa_supplicant) || fail 'wpa_supplicant missing'
+    (exec -a @wpa_supplicant "$supplicant" -B -D nl80211 -i wlan0 \
+        -c /run/onekvm/wpa_supplicant.conf -P /run/onekvm/nfs-wpa.pid \
+        -C /run/wpa_supplicant) || fail 'supplicant failed'
     attempt=0
     # The initramfs has no /var/run, so name the control directory explicitly.
     until wpa_cli -p /run/wpa_supplicant -i wlan0 status | grep -q '^wpa_state=COMPLETED$'; do
