@@ -14,7 +14,9 @@ onekvm-machine-nanokvm-i2c-probe: src/onekvm-machine-nanokvm-detect.c
 test-boot-splash:
 	@work=$$(mktemp -d); trap 'rm -rf "$$work"' EXIT; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
-	    tests/boot-splash-test.c $(LDFLAGS) -o "$$work/test" && "$$work/test"
+	    tests/boot-splash-test.c $(LDFLAGS) -o "$$work/test" && "$$work/test" && \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -DONEKVM_SPLASH_GO \
+	    tests/boot-splash-test.c $(LDFLAGS) -o "$$work/test-go" && "$$work/test-go"
 
 clean:
 	$(RM) onekvm-machine-nanokvm-i2c-probe

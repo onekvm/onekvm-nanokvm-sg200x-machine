@@ -10,7 +10,17 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
+#ifdef ONEKVM_SPLASH_GO
+/* NanoKVM Go: landscape canvas on a 240x284 ST7789P3 framebuffer. */
+enum { WIDTH = 284, HEIGHT = 240, PANEL_WIDTH = 240, PANEL_HEIGHT = 284 };
+#define PANEL_FBTFT_ID "fb_st7789p3"
+#else
+/* Pro Desk: landscape canvas on a 172x320 JD9853 framebuffer. */
 enum { WIDTH = 320, HEIGHT = 172, PANEL_WIDTH = 172, PANEL_HEIGHT = 320 };
+#define PANEL_FBTFT_ID "fb_jd9853"
+#endif
+/* Layouts are drawn for 172 rows and centered vertically on taller canvases. */
+enum { LAYOUT_HEIGHT = 172, TOP_PAD = (HEIGHT - LAYOUT_HEIGHT) / 2 };
 
 struct splash_asset {
     unsigned width, height;
@@ -43,30 +53,33 @@ static uint16_t rgb565(unsigned r, unsigned g, unsigned b)
 static void draw_asset(uint16_t *frame, const struct splash_asset *asset, unsigned y)
 {
     size_t pixel = 0;
-    unsigned left = (WIDTH - asset->width) / 2;
+    /* Wider artwork is clipped at the right edge instead of wrapping. */
+    unsigned left = asset->width < WIDTH ? (WIDTH - asset->width) / 2 : 0;
 
     for (size_t i = 0; i + 1 < asset->words; i += 2) {
         for (unsigned n = 0; n < asset->runs[i]; n++, pixel++) {
             unsigned row = (unsigned)(pixel / asset->width) + y;
             unsigned col = (unsigned)(pixel % asset->width) + left;
-            if (row < HEIGHT && pixel < asset->width * asset->height)
+            if (row < HEIGHT && col < WIDTH && pixel < asset->width * asset->height)
                 frame[row * WIDTH + col] = asset->runs[i + 1];
         }
     }
 }
+
+enum { BAR_WIDTH = 232, BAR_LEFT = (WIDTH - BAR_WIDTH) / 2 };
 
 static void draw_bar(uint16_t *frame, unsigned width, uint16_t color)
 {
     for (unsigned y = 0; y < 4; y++) {
         unsigned inset = (y == 0 || y == 3) ? 2 : 0;
         for (unsigned x = inset; x + inset < width; x++)
-            frame[(130 + y) * WIDTH + 44 + x] = color;
+            frame[(TOP_PAD + 130 + y) * WIDTH + BAR_LEFT + x] = color;
     }
 }
 
 static void draw_log_message(uint16_t *frame, const char *message)
 {
-    enum { LEFT = 12, TOP = 6, COLUMNS = (WIDTH - 2 * LEFT) / LOG_FONT_WIDTH, ROWS = 3 };
+    enum { LEFT = 12, TOP = TOP_PAD + 6, COLUMNS = (WIDTH - 2 * LEFT) / LOG_FONT_WIDTH, ROWS = 3 };
     char text[COLUMNS * ROWS];
     size_t length = 0, offset = 0;
     while (message[length] && length < sizeof(text)) {
@@ -109,22 +122,23 @@ static void render(uint16_t *frame, unsigned stage, int failed,
     for (unsigned i = 0; i < WIDTH * HEIGHT; i++)
         frame[i] = rgb565(8, 11, 17);
     if (failed) {
-        unsigned shift = message && *message ? 28 : 0;
-        if (shift)
+        int has_message = message && *message;
+        unsigned shift = TOP_PAD + (has_message ? 28 : 0);
+        if (has_message)
             draw_log_message(frame, message);
         draw_asset(frame, &logo_install, 23 + shift);
         draw_asset(frame, labels->paused, 86 + shift);
         draw_asset(frame, failed > 1 ? labels->saved_detail : labels->error_detail, 114 + shift);
     } else if (stage) {
-        draw_asset(frame, &logo_install, 23);
-        draw_asset(frame, labels->installing, 84);
-        draw_asset(frame, labels->stages[stage - 1], 108);
-        draw_bar(frame, 232, rgb565(31, 41, 59));
-        draw_bar(frame, 232 * stage / 7, rgb565(22, 119, 255));
-        draw_asset(frame, labels->warning, 148);
+        draw_asset(frame, &logo_install, TOP_PAD + 23);
+        draw_asset(frame, labels->installing, TOP_PAD + 84);
+        draw_asset(frame, labels->stages[stage - 1], TOP_PAD + 108);
+        draw_bar(frame, BAR_WIDTH, rgb565(31, 41, 59));
+        draw_bar(frame, BAR_WIDTH * stage / 7, rgb565(22, 119, 255));
+        draw_asset(frame, labels->warning, TOP_PAD + 148);
     } else {
-        draw_asset(frame, &logo_boot, 48);
-        draw_asset(frame, labels->starting, 125);
+        draw_asset(frame, &logo_boot, TOP_PAD + 48);
+        draw_asset(frame, labels->starting, TOP_PAD + 125);
     }
 }
 
@@ -140,12 +154,26 @@ static int valid_panel(const struct fb_var_screeninfo *var,
         /* fbtft sets nonstd=1 even though these bitfields describe RGB565. */
         var->transp.length == 0 && !var->grayscale &&
         (!var->nonstd || (var->nonstd == 1 &&
-         !strncmp(fix->id, "fb_jd9853", sizeof(fix->id)))) &&
+         !strncmp(fix->id, PANEL_FBTFT_ID, sizeof(fix->id)))) &&
         fix->type == FB_TYPE_PACKED_PIXELS && fix->visual == FB_VISUAL_TRUECOLOR &&
         fix->line_length >= PANEL_WIDTH * 2 && fix->line_length <= 4096 &&
         fix->smem_len >= fix->line_length * PANEL_HEIGHT;
 }
 
+#ifdef ONEKVM_SPLASH_GO
+/* Go panel is mounted 90 degrees from the framebuffer's native orientation. */
+static void rotate_panel(uint8_t *pixels, size_t stride, const uint16_t *frame)
+{
+    for (unsigned y = 0; y < HEIGHT; y++) {
+        for (unsigned x = 0; x < WIDTH; x++) {
+            size_t offset = x * stride + (PANEL_WIDTH - 1 - y) * 2;
+            uint16_t color = frame[y * WIDTH + x];
+            pixels[offset] = (uint8_t)color;
+            pixels[offset + 1] = (uint8_t)(color >> 8);
+        }
+    }
+}
+#else
 /* Desk panel is mounted 270 degrees from the framebuffer's native orientation. */
 static void rotate_panel(uint8_t *pixels, size_t stride, const uint16_t *frame)
 {
@@ -158,6 +186,7 @@ static void rotate_panel(uint8_t *pixels, size_t stride, const uint16_t *frame)
         }
     }
 }
+#endif
 
 static int show_panel(const char *path, const uint16_t *frame)
 {

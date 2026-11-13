@@ -4,6 +4,7 @@
 #undef main
 #include <assert.h>
 
+#ifndef ONEKVM_SPLASH_GO
 static void check_rotation(size_t stride)
 {
     uint16_t frame[WIDTH * HEIGHT] = {0};
@@ -83,7 +84,7 @@ static void check_error_message(void)
     unlink(output);
 }
 
-int main(void)
+static void check_desk(void)
 {
     struct fb_var_screeninfo var = {
         .xres = 172, .yres = 320, .xres_virtual = 172, .yres_virtual = 320,
@@ -137,6 +138,107 @@ int main(void)
     check_rotation(344);
     check_rotation(360);
     check_error_message();
+}
+#else
+static void check_go_copy(size_t stride)
+{
+    uint16_t frame[WIDTH * HEIGHT] = {0};
+    size_t size = stride * PANEL_HEIGHT;
+    uint8_t *pixels = malloc(size + 16);
+    assert(pixels);
+    memset(pixels, 0xa5, size + 16);
+    frame[0] = 0x1234;
+    frame[WIDTH - 1] = 0x5678;
+    frame[(HEIGHT - 1) * WIDTH] = 0x9abc;
+    frame[WIDTH * HEIGHT - 1] = 0xdef0;
+    rotate_panel(pixels, stride, frame);
+    /* Canvas top-left is the framebuffer's top-right, as the screen service. */
+    assert(pixels[478] == 0x34 && pixels[479] == 0x12);
+    assert(pixels[283 * stride + 478] == 0x78 && pixels[283 * stride + 479] == 0x56);
+    assert(pixels[0] == 0xbc && pixels[1] == 0x9a);
+    assert(pixels[283 * stride] == 0xf0 && pixels[283 * stride + 1] == 0xde);
+    for (unsigned y = 0; y < PANEL_HEIGHT; y++)
+        for (size_t x = 480; x < stride; x++)
+            assert(pixels[y * stride + x] == 0xa5);
+    for (unsigned i = 0; i < 16; i++)
+        assert(pixels[size + i] == 0xa5);
+    free(pixels);
+}
+
+static void check_go_render(void)
+{
+    static uint16_t bounded[WIDTH * HEIGHT + 2];
+    const struct splash_labels *all[] = { &labels_en, &labels_zh, &labels_zh_tw };
+    const uint16_t background = rgb565(8, 11, 17);
+
+    for (unsigned language = 0; language < 3; language++) {
+        for (unsigned mode = 0; mode <= 10; mode++) {
+            unsigned stage = mode <= 7 ? mode : 0;
+            int failed = mode <= 7 ? 0 : (int)mode - 8;
+            const char *message = mode == 10 ? "OneKVM Go: NFS mount failed" : NULL;
+            bounded[0] = bounded[WIDTH * HEIGHT + 1] = 0x1234;
+            render(bounded + 1, stage, failed ? failed : (mode == 10 ? 2 : 0),
+                   all[language], message);
+            assert(bounded[0] == 0x1234 && bounded[WIDTH * HEIGHT + 1] == 0x1234);
+        }
+    }
+
+    /* The boot logo sits in the vertically centered 172-row layout. */
+    render(bounded + 1, 0, 0, &labels_en, NULL);
+    unsigned top = HEIGHT, bottom = 0;
+    for (unsigned y = 0; y < HEIGHT; y++)
+        for (unsigned x = 0; x < WIDTH; x++)
+            if (bounded[1 + y * WIDTH + x] != background) {
+                if (y < top)
+                    top = y;
+                bottom = y;
+            }
+    assert(top >= TOP_PAD && bottom < TOP_PAD + LAYOUT_HEIGHT);
+    assert(top + bottom > HEIGHT - 40 && top + bottom < HEIGHT + 40);
+
+    char output[] = "/tmp/onekvm-splash-go-XXXXXX";
+    int fd = mkstemp(output);
+    assert(fd >= 0);
+    close(fd);
+    char *argv[] = { "splash", "--output", output, "boot", NULL };
+    assert(splash_cli_main(4, argv) == 0);
+    unlink(output);
+}
+
+static void check_go(void)
+{
+    struct fb_var_screeninfo var = {
+        .xres = 240, .yres = 284, .xres_virtual = 240, .yres_virtual = 284,
+        .bits_per_pixel = 16, .nonstd = 1,
+        .red = { .offset = 11, .length = 5 },
+        .green = { .offset = 5, .length = 6 },
+        .blue = { .offset = 0, .length = 5 },
+    };
+    struct fb_fix_screeninfo fix = {
+        .type = FB_TYPE_PACKED_PIXELS, .visual = FB_VISUAL_TRUECOLOR,
+        .line_length = 480, .smem_len = 480 * 284,
+    };
+    memcpy(fix.id, "fb_jd9853", sizeof("fb_jd9853"));
+    assert(!valid_panel(&var, &fix));
+    memcpy(fix.id, "fb_st7789p3", sizeof("fb_st7789p3"));
+    assert(valid_panel(&var, &fix));
+    var.xres = 284;
+    var.yres = 240;
+    assert(!valid_panel(&var, &fix));
+    check_go_copy(480);
+    check_go_copy(512);
+    check_go_render();
+}
+#endif
+
+int main(void)
+{
+#ifdef ONEKVM_SPLASH_GO
+    check_go();
+    puts("Go boot splash pixel format, layout and stride tests passed");
+#else
+    check_desk();
     puts("boot splash pixel format, rotation and stride tests passed");
+#endif
     return 0;
 }

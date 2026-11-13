@@ -1,4 +1,4 @@
-# Pro Desk early splash
+# Pro Desk and Go early splash
 
 `onekvm-boot-splash` draws the OneKVM logo to the Pro Desk's 172×320 RGB565
 framebuffer, rotated 270° to a 320×172 landscape canvas. It draws once and
@@ -29,6 +29,11 @@ here as `logo.png`. English captions are rasterized using DejaVu Sans.
 `generate-assets.py` requires Python/Pillow and regenerates the checked-in
 `assets.h`; OE and the target need neither Pillow nor a font renderer. Artwork
 is RGB565 run-length encoded in the binary.
+
+NanoKVM Go builds with `-DONEKVM_SPLASH_GO`: like the screen service, it draws a
+284×240 landscape canvas rotated 90° into the 240×284 ST7789P3 framebuffer,
+with the 172-row layout centered vertically. Its initramfs loads `fb_st7789p3` and shows
+`boot` right after arming the hardware watchdog, before Wi-Fi and NFS.
 
 Build target binaries and images through `onekvm-distro` OE/kas. For development,
 `--output FILE.ppm` renders the same logical canvas to a portable preview without
