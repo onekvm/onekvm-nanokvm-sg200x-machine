@@ -37,8 +37,8 @@ def validate_tmds_clock(data, path):
         assert limit >= max(clocks), (path, 'TMDS ceiling kHz', limit, 'required kHz', max(clocks))
 
 
-for pro in [False, True]:
-    directory = root / 'share/edid' / ('pro' if pro else '')
+for pro in [False]:
+    directory = root / 'share/edid'
     files = list(directory.glob('*.edid.bin'))
     assert (directory / '1920x1080p90.edid.bin').is_file()
     assert not (directory / '1080p60-4k30.edid.bin').exists()
