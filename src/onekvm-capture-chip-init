@@ -1,6 +1,16 @@
 #!/bin/sh
 # Run chip-specific initialization before the capture backend owns the bus.
 set -eu
+# --condition (ExecCondition): succeed only while Core is not running, so the
+# bus is free. Scan /proc instead of asking PID 1, which answers slowly while
+# it starts units at boot.
+if [ "${1-}" = --condition ]; then
+    for comm in "${ONEKVM_PROC_DIR:-/proc}"/[0-9]*/comm; do
+        IFS= read -r name 2>/dev/null <"$comm" || continue
+        [ "$name" != onekvm-server ] || exit 1
+    done
+    exit 0
+fi
 hooks=${ONEKVM_CAPTURE_CHIP_INIT_DIR:-/usr/libexec/onekvm/capture-chip-init.d}
 for hook in "$hooks"/*; do
     [ -f "$hook" ] && [ -x "$hook" ] || continue
