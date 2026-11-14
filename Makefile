@@ -15,6 +15,7 @@ test-boot-splash:
 	@work=$$(mktemp -d); trap 'rm -rf "$$work"' EXIT; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
 	    tests/boot-splash-test.c $(LDFLAGS) -o "$$work/test" && "$$work/test"
+	sh tests/boot-progress-test.sh
 
 clean:
 	$(RM) onekvm-machine-nanokvm-i2c-probe

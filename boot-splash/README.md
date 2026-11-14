@@ -18,6 +18,30 @@ An absent or ambiguous boot disk is never guessed. Mount and write failures are
 reported on the serial console; the panel only shows `error-saved` after a record
 was published successfully. A failed folder rename preserves the staged files.
 
+The boot screen carries a progress bar under the caption. OneKVM U-Boot shows
+it empty with the logo, and the SD boot script fills 2% and 4% by setting
+`onekvm_progress` as the kernel and initramfs load; `generate-assets.py
+--uboot-header` writes that artwork and the bar geometry. Named checkpoints
+then move it: firstboot draws 5% and then `storage` (10%) once storage is ready;
+`onekvm-boot-progress-*.service` mark `early` (37%) when systemd starts units,
+`sysinit` (56%) and `basic` (65%); the screen service marks `screen` (78%) when
+it opens the panel. Its first frame replaces the bar. The percentages follow a
+normal Pro Desk boot and live only in the `boot_stages` table.
+
+Between checkpoints `animate` keeps the bar moving. `80-bootprogress` starts it
+in the initramfs after Recovery, and it survives switch_root. It moves steadily
+to 90% of the way to the next checkpoint over that stage's usual duration, then
+ever slower, and never reaches it. Every writer only lengthens the fill, and bar updates
+hold an advisory lock on the framebuffer. The screen service runs `finish`
+before its first frame; `finish` stops the animator and waits for it to exit.
+The animator also stops when the bar disappears, for example under Recovery,
+and after two minutes.
+
+`progress PERCENT|CHECKPOINT` changes nothing unless the panel shows a boot
+screen drawn by this program, and it never draws over install, error or
+screen-service frames. The units order only among themselves and never hold up
+a target.
+
 The paused screen shows the final fatal log line at the top, above the logo and
 record-location hint. Long lines wrap across up to three rows, with an ellipsis
 if needed; the complete reason remains in the serial log and diagnostic record.

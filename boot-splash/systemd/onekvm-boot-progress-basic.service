@@ -1,0 +1,16 @@
+[Unit]
+Description=Advance the OneKVM boot bar after basic system startup
+DefaultDependencies=no
+After=basic.target onekvm-boot-progress-sysinit.service
+# The screen service owns the panel once it starts.
+Before=onekvm-device-screen-display.service
+ConditionPathExists=/dev/fb0
+
+[Service]
+Type=oneshot
+# Stay active so later transactions never move the bar again.
+RemainAfterExit=yes
+ExecStart=-/usr/sbin/onekvm-boot-splash progress basic
+
+[Install]
+WantedBy=multi-user.target

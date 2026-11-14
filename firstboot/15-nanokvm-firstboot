@@ -29,7 +29,15 @@ nanokvm_splash() {
         nanokvm_oled_state install "$2"
     fi
     command -v onekvm-boot-splash >/dev/null 2>&1 || return 0
+    [ "${1:-}" != boot ] || set -- --progress "${splash_progress:-5}" "$@"
     onekvm-boot-splash --language "${splash_language:-en}" "$@" 2>/dev/null || true
+}
+
+# The root system continues the boot bar with onekvm-boot-progress units.
+nanokvm_splash_progress() {
+    splash_progress=$1
+    command -v onekvm-boot-splash >/dev/null 2>&1 || return 0
+    onekvm-boot-splash progress "$1" 2>/dev/null || true
 }
 
 # Leave onekvm-boot-error/try-N.zip on the boot FAT.
@@ -785,6 +793,7 @@ nanokvm_run() {
             nanokvm_extend_userdata
             nanokvm_migrate_overlay
             info "OneKVM: A/B storage layout is complete"
+            nanokvm_splash_progress storage
             return 0
         fi
         [ -z "$userdata_type" ] ||
@@ -813,6 +822,7 @@ nanokvm_run() {
         rm -f "$root_image"
         umount "$migration_dir" || nanokvm_die "cannot release migration RAM"
         rmdir "$migration_dir" 2>/dev/null || true
+        splash_progress=storage
         nanokvm_splash boot
         return 0
     fi
@@ -842,5 +852,6 @@ nanokvm_run() {
     umount "$migration_dir" || nanokvm_die "cannot release migration RAM"
     rmdir "$migration_dir" 2>/dev/null || true
     msg "OneKVM: NanoKVM A/B storage migration complete"
+    splash_progress=storage
     nanokvm_splash boot
 }
