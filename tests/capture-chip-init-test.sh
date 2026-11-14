@@ -18,4 +18,16 @@ printf '#!/bin/sh\necho firmware >>"$CAPTURE_INIT_TEST_LOG"\n' >"$work/hooks/10-
 : >"$work/log"
 "$root/src/onekvm-capture-chip-init"
 test "$(cat "$work/log")" = "$(printf 'firmware\nedid')"
+# The condition passes unless the Core process exists, without running hooks.
+export ONEKVM_PROC_DIR=$work/proc
+mkdir -p "$work/proc/1" "$work/proc/self-gone"
+echo systemd >"$work/proc/1/comm"
+: >"$work/log"
+"$root/src/onekvm-capture-chip-init" --condition
+mkdir "$work/proc/635"
+echo onekvm-server >"$work/proc/635/comm"
+if "$root/src/onekvm-capture-chip-init" --condition; then
+    echo "condition passed while Core was running" >&2; exit 1
+fi
+test ! -s "$work/log"
 echo "capture chip initialization tests passed"
