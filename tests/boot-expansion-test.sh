@@ -77,8 +77,21 @@ if (nanokvm_inspect_carrier); then echo 'accepted unknown boot size' >&2; exit 1
 [ ! -e "$filesystem/onekvm-boot-error" ]
 echo 'boot expansion preservation and legacy compatibility tests passed'
 
-# Language is read as data; no other CLI statement is evaluated by the shell.
+# Without a splash an ordinary boot leaves the boot FAT alone.
 nanokvm_splash() { :; }
+printf 'set system language zh\n' >"$filesystem/firstboot.txt"
+mount() { echo mounted >>"$work/language-mounts"; }
+nanokvm_read_splash_language
+[ -z "$splash_language" ] && [ ! -e "$work/language-mounts" ]
+mount() {
+    for mount_arg do mount_target=$mount_arg; done
+    rmdir "$mount_target"
+    ln -s "$filesystem" "$mount_target"
+}
+# Language is read as data; no other CLI statement is evaluated by the shell.
+printf '#!/bin/sh\n' >"$work/bin/onekvm-boot-splash"
+chmod +x "$work/bin/onekvm-boot-splash"
+PATH=$work/bin:$PATH
 for language in en zh zh_tw; do
     printf 'set system language %s\nrequest system setup complete\n' "$language" >"$filesystem/firstboot.txt"
     nanokvm_read_splash_language
@@ -91,3 +104,4 @@ rm "$filesystem/firstboot.txt"
 nanokvm_read_splash_language
 [ "$splash_language" = en ]
 echo 'firstboot splash language and non-executable configuration tests passed'
+

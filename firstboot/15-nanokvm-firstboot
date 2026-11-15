@@ -243,6 +243,7 @@ nanokvm_boot_error_close() {
 nanokvm_save_boot_error() {
     nanokvm_boot_error_saved=false
     if [ -n "${ONEKVM_BOOT_ERROR_DIR:-}" ]; then
+        [ -n "${splash_language:-}" ] || nanokvm_parse_language "$ONEKVM_BOOT_ERROR_DIR/firstboot.txt"
         if nanokvm_write_boot_error "$ONEKVM_BOOT_ERROR_DIR" "$1"; then
             nanokvm_boot_error_saved=true
         else
@@ -253,6 +254,7 @@ nanokvm_save_boot_error() {
     # Tests and a normal shell must not mount the host disk. Init is pid 1.
     [ "$$" -eq 1 ] || return 0
     if nanokvm_boot_error_open; then
+        [ -n "${splash_language:-}" ] || nanokvm_parse_language "$boot_error_mount/firstboot.txt"
         if nanokvm_write_boot_error "$boot_error_mount" "$1"; then
             nanokvm_boot_error_saved=true
         else
@@ -265,21 +267,32 @@ nanokvm_save_boot_error() {
     return 0
 }
 
+# firstboot.txt contains credentials and CLI statements, never shell code.
+# Read only the installer's canonical language statement, without eval/source.
+nanokvm_parse_language() {
+    splash_language=en
+    [ -f "$1" ] || return 0
+    splash_language=$(awk '
+        $1 == "set" && $2 == "system" && $3 == "language" && NF == 4 {
+            if ($4 == "en" || $4 == "zh" || $4 == "zh_tw") value=$4
+        }
+        END { print value == "" ? "en" : value }
+    ' "$1")
+}
+
 nanokvm_read_splash_language() {
-    # firstboot.txt contains credentials and CLI statements, never shell code.
-    # Read only the installer's canonical language statement, without eval/source.
+    # Only the splash shows text this early. Without it an ordinary boot never
+    # needs the language, so it does not mount the boot FAT for it; a boot
+    # error reads the language from the FAT it writes its record to.
+    if ! command -v onekvm-boot-splash >/dev/null 2>&1; then
+        splash_language=
+        return 0
+    fi
     splash_language=en
     language_mount=$migration_dir/language
     mkdir -p "$language_mount" || return 0
     if mount -t vfat -o ro,nodev,nosuid,noexec "$loader" "$language_mount"; then
-        if [ -f "$language_mount/firstboot.txt" ]; then
-            splash_language=$(awk '
-                $1 == "set" && $2 == "system" && $3 == "language" && NF == 4 {
-                    if ($4 == "en" || $4 == "zh" || $4 == "zh_tw") value=$4
-                }
-                END { print value == "" ? "en" : value }
-            ' "$language_mount/firstboot.txt")
-        fi
+        nanokvm_parse_language "$language_mount/firstboot.txt"
         umount "$language_mount" || nanokvm_die "cannot release language inspection mount"
     fi
     rmdir "$language_mount" 2>/dev/null || true
