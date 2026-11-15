@@ -123,6 +123,15 @@ nanokvm_write_boot_error "$work/boot" 'save after a failed diagnostic rename'
 check_zip "$records/try-13.zip" 'reason: save after a failed diagnostic rename'
 grep -q 'reason: diagnostic folder rename failed' "$records/.try-12/reason.txt"
 
+# Without a splash the language was not read at boot; the record reads it
+# from the boot FAT it is written to.
+printf 'set system language zh\nset auth user test password secret\n' >"$work/boot/firstboot.txt"
+splash_language=
+nanokvm_save_boot_error 'language read with the record'
+[ "$nanokvm_boot_error_saved" = true ] && [ "$splash_language" = zh ]
+check_zip "$records/try-14.zip" '这次记录是 SD 卡 onekvm-boot-error/try-14.zip' \
+    'reason: language read with the record'
+
 # A directory that cannot be written keeps the serial instruction.
 rm -rf "$work/boot"
 ONEKVM_BOOT_ERROR_DIR=$work/missing
