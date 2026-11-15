@@ -96,7 +96,9 @@ in `/usr/libexec/onekvm/capture-chip-init.d/` run in filename order before
 MMF modules and Core. Firmware updates use the `10-` prefix and chip
 information uses `20-`; a failed hook stops the remaining hooks and leaves
 capture unavailable. Core still starts, so Web, SSH and the screen remain
-available. The PCIe firmware hook leaves C, D and other UXC revisions
+available. Core does not wait for the MMF modules: its video source opens
+once they are loaded and the module loader has released the LT6911 lock.
+The PCIe firmware hook leaves C, D and other UXC revisions
 unchanged for the capture backend; only a failed read or unknown chip fails.
 
 Firmware hooks must check the actual chip on each initialization. An already
