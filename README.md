@@ -149,7 +149,10 @@ and whole disks are rejected by device number, including mount aliases.
 are shared by Cube/PCIe, Pro SD, and Pro eMMC. Profiles define geometry;
 root parameters select the medium and slot, and ambiguous devices are rejected.
 SD installers are compact carriers expanded on first boot. Pro eMMC uses
-cmdline partitions and preserves the vendor bootloader prefix. All profiles
+cmdline partitions and preserves the vendor bootloader prefix.
+`storage-layout.sh` also identifies the NanoKVM Go SD card for its Recovery:
+its U-Boot passes only `rauc.slot`, so the device-tree machine, the image's
+disk ID and the exact Pro SD offsets select it. All profiles
 use 128 MiB read-only A/B slots (SquashFS or EROFS), a shared upper/work, and f2fs
 for new userdata while retaining existing ext4/f2fs. Installed Cube/PCIe and both Pro media use a 128 MiB boot FAT;
 SD release carriers size their FAT to the boot files plus headroom. The `bootgrow`

@@ -50,6 +50,13 @@ onekvm_storage_carrier_geometry() {
         [ "$carrier_root_size" -gt 0 ] && [ "$carrier_root_size" -le "$root_slot_size" ]
 }
 
+# NanoKVM Go's U-Boot passes only rauc.slot. Its single SD card is identified by
+# the machine here and by the disk signature and exact layout in validation.
+onekvm_storage_is_go() {
+    tr '\000' '\n' <"${ONEKVM_DT_COMPATIBLE_FILE:-/proc/device-tree/compatible}" 2>/dev/null |
+        grep -qx 'sipeed,nanokvm-go'
+}
+
 onekvm_storage_select() {
     storage_root=; storage_media=; storage_slot=; storage_geometry=
     disk=; disk_name=; loader=; root_a=; root_b=; userdata=
@@ -61,6 +68,12 @@ onekvm_storage_select() {
             rauc.slot=A|rauc.slot=B) storage_slot=${storage_arg#rauc.slot=} ;;
         esac
     done
+    if [ -z "$storage_root" ] && onekvm_storage_is_go; then
+        case "$storage_slot" in
+            A) storage_root=/dev/mmcblk1p2 ;;
+            B) storage_root=/dev/mmcblk1p3 ;;
+        esac
+    fi
     case "$storage_root" in
         PARTUUID=4f4b5650-02|PARTUUID=4f4b5650-03)
             [ -z "$storage_media" ] || [ "$storage_media" = pro-sd ] || return 1
@@ -85,6 +98,11 @@ onekvm_storage_select() {
             [ -z "$storage_media" ] || [ "$storage_media" = nanokvm ] || return 1
             storage_media=nanokvm; disk=/dev/mmcblk0
             ;;
+        /dev/mmcblk1p2|/dev/mmcblk1p3)
+            onekvm_storage_is_go || return 1
+            [ -z "$storage_media" ] || [ "$storage_media" = go-sd ] || return 1
+            storage_media=go-sd; disk=/dev/mmcblk1
+            ;;
         *) onekvm_storage_error "unrecognized root device: $storage_root"; return 1 ;;
     esac
     # Keep the positively identified boot volume available for diagnostics even
@@ -92,7 +110,7 @@ onekvm_storage_select() {
     disk_name=${disk##*/}
     loader=${disk}p1
     case "$storage_root:$storage_slot" in
-        PARTUUID=4f4b5650-02:A|PARTUUID=4f4b5650-03:B|PARTLABEL=pro-rootfs-a:A|PARTLABEL=pro-rootfs-b:B|/dev/mmcblk0p2:A|/dev/mmcblk0p3:B) ;;
+        PARTUUID=4f4b5650-02:A|PARTUUID=4f4b5650-03:B|PARTLABEL=pro-rootfs-a:A|PARTLABEL=pro-rootfs-b:B|/dev/mmcblk0p2:A|/dev/mmcblk0p3:B|/dev/mmcblk1p2:A|/dev/mmcblk1p3:B) ;;
         *) onekvm_storage_error "root device and boot slot disagree"; return 1 ;;
     esac
     root_a=${disk}p2; root_b=${disk}p3; userdata=${disk}p4
@@ -109,6 +127,11 @@ onekvm_storage_select() {
             loader_start=2048; loader_size=262144; root_a_start=264192
             userdata_uuid=4f4b5650-0000-4000-8000-000000000004
             storage_compatible='OneKVM NanoKVM Pro' ;;
+        go-sd)
+            # Same offsets as the Pro SD card.
+            loader_start=2048; loader_size=262144; root_a_start=264192
+            userdata_uuid=4f4b5647-0000-4000-8000-000000000004
+            storage_compatible='OneKVM NanoKVM Go' ;;
         pro-emmc)
             # After the SPL/ATF/U-Boot/OP-TEE prefix. Same slot sizes as pro-sd.
             loader_start=40960; loader_size=262144; root_a_start=303104
@@ -124,7 +147,11 @@ onekvm_storage_select() {
 onekvm_storage_validate() {
     [ -b "$disk" ] || return 1
     onekvm_read_line storage_kind "/sys/class/block/$disk_name/device/type" || return 1
-    case "$storage_media:$storage_kind" in nanokvm:SD|pro-sd:SD|pro-emmc:MMC) ;; *) return 1 ;; esac
+    case "$storage_media:$storage_kind" in nanokvm:SD|pro-sd:SD|go-sd:SD|pro-emmc:MMC) ;; *) return 1 ;; esac
+    # The Go has no root PARTUUID on its command line: require the image's disk ID.
+    if [ "$storage_media" = go-sd ]; then
+        [ "$(hexdump -v -s 440 -n 4 -e '1/1 "%02x"' "$disk" 2>/dev/null)" = 47564b4f ] || return 1
+    fi
     for storage_number in 1 2 3 4; do
         storage_sys=/sys/class/block/${disk_name}p${storage_number}
         onekvm_read_line storage_partition "$storage_sys/partition" || return 1

@@ -43,6 +43,25 @@ if onekvm_storage_select; then echo 'conflicting slot accepted' >&2; exit 1; fi
 printf 'root=/dev/sda2\n' >"$ONEKVM_CMDLINE_FILE"
 if onekvm_storage_select; then echo 'unknown root accepted' >&2; exit 1; fi
 [ -z "$disk$disk_name$loader$root_a$root_b$userdata" ]
+
+# The Go passes only rauc.slot; the device tree names the machine.
+export ONEKVM_DT_COMPATIBLE_FILE=$work/compatible
+printf 'sipeed,nanokvm-go\000axera,ax620q\000' >"$ONEKVM_DT_COMPATIBLE_FILE"
+printf 'console=ttyS3,115200n8 rauc.slot=B onekvm.build-id=test\n' >"$ONEKVM_CMDLINE_FILE"
+onekvm_storage_select
+[ "$storage_media:$disk:$loader:$root_b:$userdata" = go-sd:/dev/mmcblk1:/dev/mmcblk1p1:/dev/mmcblk1p3:/dev/mmcblk1p4 ]
+[ "$loader_start:$root_a_start:$root_b_start:$userdata_start" = 2048:264192:526336:788480 ]
+[ "$storage_compatible" = 'OneKVM NanoKVM Go' ]
+printf 'console=ttyS3,115200n8\n' >"$ONEKVM_CMDLINE_FILE"
+if onekvm_storage_select; then echo 'Go without a slot accepted' >&2; exit 1; fi
+printf 'rauc.slot=A onekvm.media=pro-sd\n' >"$ONEKVM_CMDLINE_FILE"
+if onekvm_storage_select; then echo 'Go with another medium accepted' >&2; exit 1; fi
+printf 'axera,ax620q\000' >"$ONEKVM_DT_COMPATIBLE_FILE"
+for cmd in 'rauc.slot=A' 'root=/dev/mmcblk1p2 rauc.slot=A'; do
+    printf '%s\n' "$cmd" >"$ONEKVM_CMDLINE_FILE"
+    if onekvm_storage_select; then echo 'Go layout accepted on another machine' >&2; exit 1; fi
+done
+unset ONEKVM_DT_COMPATIBLE_FILE
 echo "boot medium selection tests passed"
 # Compact source offsets are distinct from the final installed layout.
 unset TEST_PARTITION

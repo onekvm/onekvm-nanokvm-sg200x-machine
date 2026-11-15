@@ -124,7 +124,9 @@ Pro Desk 使用单次绘制的 RGB565 [启动画面](boot-splash/README.md)：�
 `storage/storage-layout.sh`、`storage/build-image.py` 和 firstboot hook 由
 Cube/PCIe、Pro SD、Pro eMMC 共用。profile 定义几何，root 参数选择介质和槽位，
 设备不明确时拒绝写入。SD 安装镜像首启展开；Pro eMMC 使用 cmdline 分区，保留
-厂商启动链前缀。三者均使用每槽 128 MiB 的 squashfs A/B、共享 upper/work；新 userdata 为 f2fs，
+厂商启动链前缀。`storage-layout.sh` 另为 NanoKVM Go 的 Recovery 识别其 SD 卡：
+Go 的 U-Boot 只传 `rauc.slot`，因此按设备树机型、镜像磁盘标识和与 Pro SD 相同的
+精确偏移选择。三者均使用每槽 128 MiB 的 squashfs A/B、共享 upper/work；新 userdata 为 f2fs，
 已有 ext4/f2fs 保留。Cube/PCIe、Pro SD 与 Pro eMMC 安装后统一使用 128 MiB boot FAT；
 SD 发布载体的 FAT 按引导文件加少量余量生成，不填满最终分区容量。首启识别 `bootgrow`
 标记，将 rootfs 和全部引导文件（含 firstboot 配置）备份到 RAM 并校验，再建立最终分区；
