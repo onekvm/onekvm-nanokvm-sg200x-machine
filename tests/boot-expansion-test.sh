@@ -105,3 +105,25 @@ nanokvm_read_splash_language
 [ "$splash_language" = en ]
 echo 'firstboot splash language and non-executable configuration tests passed'
 
+
+# Userdata is probed for ext4 and f2fs first; anything else still gets the
+# full probe, so an unknown filesystem never looks empty.
+blkid() {
+    echo "$*" >>"$work/blkid-calls"
+    case " $* " in
+        *' -n ext4,f2fs '*) [ "$TEST_FS" = f2fs ] || return 2 ;;
+    esac
+    [ -z "$TEST_FS" ] && return 2
+    printf '%s\n' "$TEST_FS"
+}
+TEST_FS=f2fs
+[ "$(nanokvm_filesystem_type /dev/mmcblk0p4)" = f2fs ]
+[ "$(wc -l <"$work/blkid-calls")" = 1 ]
+rm "$work/blkid-calls"
+TEST_FS=btrfs
+[ "$(nanokvm_filesystem_type /dev/mmcblk0p4)" = btrfs ]
+[ "$(wc -l <"$work/blkid-calls")" = 2 ]
+TEST_FS=
+[ -z "$(nanokvm_filesystem_type /dev/mmcblk0p4)" ]
+unset -f blkid
+echo 'userdata filesystem probe tests passed'

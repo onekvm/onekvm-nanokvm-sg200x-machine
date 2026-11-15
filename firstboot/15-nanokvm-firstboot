@@ -355,7 +355,11 @@ nanokvm_partition_size() {
 }
 
 nanokvm_filesystem_type() {
-    blkid -p -s TYPE -o value "$1" 2>/dev/null || true
+    # An initialized userdata holds ext4 or f2fs; probing only those is much
+    # cheaper. Anything else needs the full probe: an unknown filesystem must
+    # never look empty.
+    blkid -p -n ext4,f2fs -s TYPE -o value "$1" 2>/dev/null ||
+        blkid -p -s TYPE -o value "$1" 2>/dev/null || true
 }
 
 nanokvm_oled_module=/usr/lib/onekvm-initramfs/onekvm-installing-oled.ko
@@ -744,7 +748,7 @@ nanokvm_run() {
     nanokvm_wait_for_block "$root_a" ||
         nanokvm_die "rootfs A partition was not found"
 
-    storage_kind=$(cat "/sys/class/block/$disk_name/device/type") ||
+    onekvm_read_line storage_kind "/sys/class/block/$disk_name/device/type" ||
         nanokvm_die "cannot identify storage hardware"
     case "$storage_media:$storage_kind" in
         nanokvm:SD|pro-sd:SD|pro-emmc:MMC) ;;
