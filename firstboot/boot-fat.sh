@@ -12,8 +12,8 @@ onekvm_boot_fat_check() (
     # Compare device numbers, so an alias such as /dev/onekvm-boot cannot
     # hide an existing mount. Refuse repair of either partition or whole disk.
     if [ -b "$loader" ] && [ -b "$disk" ] &&
-        fat_dev=$(cat "/sys/class/block/${loader##*/}/dev") &&
-        fat_disk_dev=$(cat "/sys/class/block/${disk##*/}/dev") &&
+        read -r fat_dev <"/sys/class/block/${loader##*/}/dev" &&
+        read -r fat_disk_dev <"/sys/class/block/${disk##*/}/dev" &&
         ! awk -v part="$fat_dev" -v disk="$fat_disk_dev" \
             '$3 == part || $3 == disk { found=1 } END { exit !found }' /proc/self/mountinfo &&
         fat_checker=$(command -v fsck.fat) && fat_timeout=$(command -v timeout); then

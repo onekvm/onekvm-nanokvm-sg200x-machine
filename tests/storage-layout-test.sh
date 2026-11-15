@@ -74,3 +74,34 @@ onekvm_storage_select
 onekvm_storage_carrier_geometry
 [ "$carrier_boot_start:$carrier_boot_size:$carrier_root_start" = 2048:98304:100352 ]
 echo 'Pro SD compact carrier selection tests passed'
+
+# Lines are read like a one-line cat, without starting a process.
+printf 'no newline' >"$work/line"
+onekvm_read_line value "$work/line"
+[ "$value" = 'no newline' ]
+printf ' root=/dev/mmcblk0p2  rauc.slot=A \n' >"$work/line"
+onekvm_read_line value "$work/line"
+[ "$value" = ' root=/dev/mmcblk0p2  rauc.slot=A ' ]
+value=stale
+if onekvm_read_line value "$work/missing" 2>/dev/null; then echo 'missing file read' >&2; exit 1; fi
+[ -z "$value" ]
+# Boot runs these checks twice before the root switch; none starts cat.
+mkdir -p "$work/bin"
+printf '#!/bin/sh\necho "$*" >>"%s/cat-calls"\n' "$work" >"$work/bin/cat"
+chmod +x "$work/bin/cat"
+saved_path=$PATH
+PATH=$work/bin:$PATH
+cat /dev/null
+[ -s "$work/cat-calls" ]
+rm "$work/cat-calls"
+onekvm_storage_select
+onekvm_storage_carrier_geometry
+mkdir -p "$work/sys/class/block/mmcblk0p1"
+printf '1\n' >"$work/sys/class/block/mmcblk0p1/start"
+printf '65536\n' >"$work/sys/class/block/mmcblk0p1/size"
+printf 'root=/dev/mmcblk0p2 rauc.slot=A\n' >"$ONEKVM_CMDLINE_FILE"
+onekvm_storage_select
+PATH=$saved_path
+[ "$storage_media:$storage_geometry" = nanokvm:nanokvm-legacy-32m ]
+[ ! -e "$work/cat-calls" ]
+echo 'storage checks read files without starting processes'

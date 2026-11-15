@@ -2,6 +2,15 @@
 # Shared by firstboot, the running system and Recovery. Never guess a disk.
 onekvm_storage_error() { echo "OneKVM storage: $*" >&2; return 1; }
 
+# VAR FILE: the first line of FILE in VAR, without starting a process. A last
+# line without a newline still counts. Every check below reads one-line sysfs
+# or cmdline files, twice per boot before the root switch; starting cat for
+# each one cost about 0.1 s per check.
+onekvm_read_line() {
+    eval "$1="
+    IFS= read -r "$1" <"$2" || eval "[ -n \"\${$1}\" ]"
+}
+
 onekvm_nanokvm_probe_geometry() {
     [ "$storage_media" = nanokvm ] || return 0
     storage_sysfs=${ONEKVM_STORAGE_SYSFS:-/sys/class/block}
@@ -9,8 +18,8 @@ onekvm_nanokvm_probe_geometry() {
     # layout so RAUC and Recovery upgrades can continue to use old devices.
     [ -r "$storage_sysfs/${disk_name}p1/start" ] || return 0
     [ -r "$storage_sysfs/${disk_name}p1/size" ] || return 0
-    old_start=$(cat "$storage_sysfs/${disk_name}p1/start") || return 0
-    old_size=$(cat "$storage_sysfs/${disk_name}p1/size") || return 0
+    onekvm_read_line old_start "$storage_sysfs/${disk_name}p1/start" || return 0
+    onekvm_read_line old_size "$storage_sysfs/${disk_name}p1/size" || return 0
     case "$old_start:$old_size" in
         1:65536)
             loader_start=1; loader_size=65536; root_a_start=67584
@@ -27,10 +36,10 @@ onekvm_storage_carrier_geometry() {
     storage_sysfs=${ONEKVM_STORAGE_SYSFS:-/sys/class/block}
     [ ! -e "$storage_sysfs/${disk_name}p3" ] &&
         [ ! -e "$storage_sysfs/${disk_name}p4" ] || return 1
-    carrier_boot_start=$(cat "$storage_sysfs/${disk_name}p1/start") || return 1
-    carrier_boot_size=$(cat "$storage_sysfs/${disk_name}p1/size") || return 1
-    carrier_root_start=$(cat "$storage_sysfs/${disk_name}p2/start") || return 1
-    carrier_root_size=$(cat "$storage_sysfs/${disk_name}p2/size") || return 1
+    onekvm_read_line carrier_boot_start "$storage_sysfs/${disk_name}p1/start" || return 1
+    onekvm_read_line carrier_boot_size "$storage_sysfs/${disk_name}p1/size" || return 1
+    onekvm_read_line carrier_root_start "$storage_sysfs/${disk_name}p2/start" || return 1
+    onekvm_read_line carrier_root_size "$storage_sysfs/${disk_name}p2/size" || return 1
     case "$carrier_boot_start:$carrier_boot_size:$carrier_root_start:$carrier_root_size" in
         *[!0-9:]*) return 1 ;;
     esac
@@ -44,7 +53,8 @@ onekvm_storage_carrier_geometry() {
 onekvm_storage_select() {
     storage_root=; storage_media=; storage_slot=; storage_geometry=
     disk=; disk_name=; loader=; root_a=; root_b=; userdata=
-    for storage_arg in $(cat "${ONEKVM_CMDLINE_FILE:-/proc/cmdline}"); do
+    onekvm_read_line storage_cmdline "${ONEKVM_CMDLINE_FILE:-/proc/cmdline}" || return 1
+    for storage_arg in $storage_cmdline; do
         case "$storage_arg" in
             root=*) storage_root=${storage_arg#root=} ;;
             onekvm.media=*) storage_media=${storage_arg#onekvm.media=} ;;
@@ -113,13 +123,14 @@ onekvm_storage_select() {
 
 onekvm_storage_validate() {
     [ -b "$disk" ] || return 1
-    storage_kind=$(cat "/sys/class/block/$disk_name/device/type") || return 1
+    onekvm_read_line storage_kind "/sys/class/block/$disk_name/device/type" || return 1
     case "$storage_media:$storage_kind" in nanokvm:SD|pro-sd:SD|pro-emmc:MMC) ;; *) return 1 ;; esac
     for storage_number in 1 2 3 4; do
         storage_sys=/sys/class/block/${disk_name}p${storage_number}
-        [ "$(cat "$storage_sys/partition")" = "$storage_number" ] || return 1
-        storage_start=$(cat "$storage_sys/start") || return 1
-        storage_size=$(cat "$storage_sys/size") || return 1
+        onekvm_read_line storage_partition "$storage_sys/partition" || return 1
+        [ "$storage_partition" = "$storage_number" ] || return 1
+        onekvm_read_line storage_start "$storage_sys/start" || return 1
+        onekvm_read_line storage_size "$storage_sys/size" || return 1
         case "$storage_number" in
             1) [ "$storage_start:$storage_size" = "$loader_start:$loader_size" ] || return 1 ;;
             2) [ "$storage_start:$storage_size" = "$root_a_start:$root_slot_size" ] || return 1 ;;
