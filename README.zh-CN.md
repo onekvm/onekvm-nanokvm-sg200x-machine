@@ -90,7 +90,8 @@ Pro 的预设和采集芯片 hook 在 `onekvm-nanokvm-pro-machine` 仓库。
 Pro 与 Cube/PCIe 共用采集芯片初始化服务。它在 MMF 模块和 Core 启动前按文件名
 顺序执行 `/usr/libexec/onekvm/capture-chip-init.d/` 下的可执行 hook：固件升级
 使用 `10-` 前缀，芯片信息使用 `20-`。任一 hook 失败会停止后续 hook，采集不可用；
-Core 仍会启动，网页、SSH 和屏幕照常可用。PCIe 固件 hook 遇到 C、D 或其他 UXC
+Core 仍会启动，网页、SSH 和屏幕照常可用。Core 不等待 MMF 模块：模块加载完成、
+加载脚本释放 LT6911 锁之后，视频源才打开。PCIe 固件 hook 遇到 C、D 或其他 UXC
 修订时不改动桥片，交由采集后端识别；只有读取失败或未知芯片才失败。
 
 固件 hook 每次初始化都应检查实际芯片，固件已匹配时跳过写入。升级校验后，Pro 和 PCIe 使用各自的桥片复位机制。Cube 没有
