@@ -107,11 +107,14 @@ echo 'firstboot splash language and non-executable configuration tests passed'
 
 
 # Userdata is probed for ext4 and f2fs first; anything else still gets the
-# full probe, so an unknown filesystem never looks empty.
+# full probe, so an unknown filesystem never looks empty. Like util-linux on a
+# partition, the filtered probe succeeds without a type when only the
+# partition table entry matches.
 blkid() {
     echo "$*" >>"$work/blkid-calls"
     case " $* " in
-        *' -n ext4,f2fs '*) [ "$TEST_FS" = f2fs ] || return 2 ;;
+        *' -n ext4,f2fs '*)
+            [ "$TEST_FS" = f2fs ] || return "${TEST_FILTERED_STATUS:-0}" ;;
     esac
     [ -z "$TEST_FS" ] && return 2
     printf '%s\n' "$TEST_FS"
@@ -120,10 +123,15 @@ TEST_FS=f2fs
 [ "$(nanokvm_filesystem_type /dev/mmcblk0p4)" = f2fs ]
 [ "$(wc -l <"$work/blkid-calls")" = 1 ]
 rm "$work/blkid-calls"
-TEST_FS=btrfs
-[ "$(nanokvm_filesystem_type /dev/mmcblk0p4)" = btrfs ]
-[ "$(wc -l <"$work/blkid-calls")" = 2 ]
-TEST_FS=
-[ -z "$(nanokvm_filesystem_type /dev/mmcblk0p4)" ]
+for TEST_FILTERED_STATUS in 0 2; do
+    TEST_FS=btrfs
+    [ "$(nanokvm_filesystem_type /dev/mmcblk0p4)" = btrfs ]
+    TEST_FS=squashfs
+    [ "$(nanokvm_filesystem_type /dev/mmcblk0p2)" = squashfs ]
+    TEST_FS=
+    [ -z "$(nanokvm_filesystem_type /dev/mmcblk0p4)" ]
+done
+[ "$(wc -l <"$work/blkid-calls")" = 12 ]
 unset -f blkid
+unset TEST_FILTERED_STATUS
 echo 'userdata filesystem probe tests passed'
