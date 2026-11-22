@@ -357,9 +357,12 @@ nanokvm_partition_size() {
 nanokvm_filesystem_type() {
     # An initialized userdata holds ext4 or f2fs; probing only those is much
     # cheaper. Anything else needs the full probe: an unknown filesystem must
-    # never look empty.
-    blkid -p -n ext4,f2fs -s TYPE -o value "$1" 2>/dev/null ||
-        blkid -p -s TYPE -o value "$1" 2>/dev/null || true
+    # never look empty. On a partition the filtered probe still succeeds with
+    # the partition table entry and no type, so test the type, not the status.
+    fs_type=$(blkid -p -n ext4,f2fs -s TYPE -o value "$1" 2>/dev/null || true)
+    [ -n "$fs_type" ] ||
+        fs_type=$(blkid -p -s TYPE -o value "$1" 2>/dev/null || true)
+    printf '%s\n' "$fs_type"
 }
 
 nanokvm_oled_module=/usr/lib/onekvm-initramfs/onekvm-installing-oled.ko
