@@ -40,7 +40,7 @@ make
 ```
 
 The complete target package is built by the `onekvm-machine-nanokvm` recipe in
-the `meta-onekvm-bsp` layer. Yocto packaging remains in `onekvm-distro` because it
+the `meta-sipeed/meta-nanokvm` layer. Yocto packaging remains in `onekvm-distro` because it
 contains distribution-specific dependencies, paths, and upgrade handling.
 The recipe keeps its existing package name for upgrade compatibility.
 

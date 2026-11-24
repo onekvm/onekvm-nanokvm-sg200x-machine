@@ -36,7 +36,7 @@ OneKVM 仍在运行，再删除 `/boot/boot_retry_time.txt`。initramfs 计数�
 make
 ```
 
-完整目标软件包由 `meta-onekvm-bsp` layer 中的 `onekvm-machine-nanokvm` 配方构建。
+完整目标软件包由 `meta-sipeed/meta-nanokvm` layer 中的 `onekvm-machine-nanokvm` 配方构建。
 Yocto 配方仍保留在 `onekvm-distro`，因为其中包含发行版专用依赖、安装路径和
 升级处理逻辑。配方继续使用现有软件包名，以保持升级兼容性。
 
