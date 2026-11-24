@@ -154,7 +154,8 @@ int main(int argc, char **argv)
             goto close_archive;
     }
     central_end = ftell(archive);
-    if (central_end < central_offset || central_end > UINT32_MAX ||
+    /* long is 32 bits on ARMv7: compare in a type wider than both. */
+    if (central_end < central_offset || (unsigned long long)central_end > UINT32_MAX ||
         write_end(archive, (unsigned)count, (uint32_t)central_offset,
                   (uint32_t)(central_end - central_offset)))
         goto close_archive;
