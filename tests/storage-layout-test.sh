@@ -61,6 +61,26 @@ for cmd in 'rauc.slot=A' 'root=/dev/mmcblk1p2 rauc.slot=A'; do
     printf '%s\n' "$cmd" >"$ONEKVM_CMDLINE_FILE"
     if onekvm_storage_select; then echo 'Go layout accepted on another machine' >&2; exit 1; fi
 done
+
+# PicoKVM: the same slot-only command line, its own geometry and ext4 userdata.
+printf 'luckfox,pico-kvm\000luckfox,pico\000rockchip,rv1106\000' >"$ONEKVM_DT_COMPATIBLE_FILE"
+printf 'console=ttyS0,115200 rootwait rauc.slot=A onekvm.build-id=test\n' >"$ONEKVM_CMDLINE_FILE"
+onekvm_storage_select
+[ "$storage_media:$disk:$loader:$root_a:$userdata" = picokvm-sd:/dev/mmcblk1:/dev/mmcblk1p1:/dev/mmcblk1p2:/dev/mmcblk1p4 ]
+[ "$loader_start:$loader_size:$root_a_start:$root_slot_size:$root_b_start:$userdata_start" = 32768:262144:294912:524288:819200:1343488 ]
+[ "$root_slot_bytes:$userdata_fs:$storage_compatible" = '268435456:ext4:OneKVM PicoKVM' ]
+printf 'rauc.slot=B\n' >"$ONEKVM_CMDLINE_FILE"
+onekvm_storage_select
+[ "$storage_media:$root_b" = picokvm-sd:/dev/mmcblk1p3 ]
+printf 'rauc.slot=A onekvm.media=go-sd\n' >"$ONEKVM_CMDLINE_FILE"
+if onekvm_storage_select; then echo 'PicoKVM with another medium accepted' >&2; exit 1; fi
+printf 'root=/dev/mmcblk1p2 rauc.slot=B\n' >"$ONEKVM_CMDLINE_FILE"
+if onekvm_storage_select; then echo 'PicoKVM slot disagreement accepted' >&2; exit 1; fi
+# Every other medium keeps f2fs for a factory reset.
+printf 'sipeed,nanokvm-go\000' >"$ONEKVM_DT_COMPATIBLE_FILE"
+printf 'rauc.slot=A\n' >"$ONEKVM_CMDLINE_FILE"
+onekvm_storage_select
+[ "$storage_media:$userdata_fs:$root_slot_size" = go-sd:f2fs:262144 ]
 unset ONEKVM_DT_COMPATIBLE_FILE
 echo "boot medium selection tests passed"
 # Compact source offsets are distinct from the final installed layout.

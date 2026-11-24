@@ -57,6 +57,12 @@ onekvm_storage_is_go() {
         grep -qx 'sipeed,nanokvm-go'
 }
 
+# PicoKVM's U-Boot also passes only rauc.slot; the same checks apply.
+onekvm_storage_is_picokvm() {
+    tr '\000' '\n' <"${ONEKVM_DT_COMPATIBLE_FILE:-/proc/device-tree/compatible}" 2>/dev/null |
+        grep -qx 'luckfox,pico-kvm'
+}
+
 onekvm_storage_select() {
     storage_root=; storage_media=; storage_slot=; storage_geometry=
     disk=; disk_name=; loader=; root_a=; root_b=; userdata=
@@ -68,7 +74,7 @@ onekvm_storage_select() {
             rauc.slot=A|rauc.slot=B) storage_slot=${storage_arg#rauc.slot=} ;;
         esac
     done
-    if [ -z "$storage_root" ] && onekvm_storage_is_go; then
+    if [ -z "$storage_root" ] && { onekvm_storage_is_go || onekvm_storage_is_picokvm; }; then
         case "$storage_slot" in
             A) storage_root=/dev/mmcblk1p2 ;;
             B) storage_root=/dev/mmcblk1p3 ;;
@@ -99,9 +105,16 @@ onekvm_storage_select() {
             storage_media=nanokvm; disk=/dev/mmcblk0
             ;;
         /dev/mmcblk1p2|/dev/mmcblk1p3)
-            onekvm_storage_is_go || return 1
-            [ -z "$storage_media" ] || [ "$storage_media" = go-sd ] || return 1
-            storage_media=go-sd; disk=/dev/mmcblk1
+            if onekvm_storage_is_go; then
+                [ -z "$storage_media" ] || [ "$storage_media" = go-sd ] || return 1
+                storage_media=go-sd
+            elif onekvm_storage_is_picokvm; then
+                [ -z "$storage_media" ] || [ "$storage_media" = picokvm-sd ] || return 1
+                storage_media=picokvm-sd
+            else
+                return 1
+            fi
+            disk=/dev/mmcblk1
             ;;
         *) onekvm_storage_error "unrecognized root device: $storage_root"; return 1 ;;
     esac
@@ -117,6 +130,8 @@ onekvm_storage_select() {
     # Cube and both Pro media use the same 128 MiB read-only root slot capacity.
     root_slot_size=262144
     root_b_gap=0
+    # File system that factory reset creates on userdata.
+    userdata_fs=f2fs
     case "$storage_media" in
         nanokvm)
             loader_start=1; loader_size=262144; root_a_start=264192
@@ -132,6 +147,14 @@ onekvm_storage_select() {
             loader_start=2048; loader_size=262144; root_a_start=264192
             userdata_uuid=4f4b5647-0000-4000-8000-000000000004
             storage_compatible='OneKVM NanoKVM Go' ;;
+        picokvm-sd)
+            # After the MBR, idbloader (sector 64) and U-Boot (sector 16384).
+            # 256 MiB slots; PicoKVM creates and mounts ext4 userdata.
+            loader_start=32768; loader_size=262144; root_a_start=294912
+            root_slot_size=524288
+            userdata_fs=ext4
+            userdata_uuid=4f4b504b-0000-4000-8000-000000000004
+            storage_compatible='OneKVM PicoKVM' ;;
         pro-emmc)
             # After the SPL/ATF/U-Boot/OP-TEE prefix. Same slot sizes as pro-sd.
             loader_start=40960; loader_size=262144; root_a_start=303104
@@ -147,10 +170,16 @@ onekvm_storage_select() {
 onekvm_storage_validate() {
     [ -b "$disk" ] || return 1
     onekvm_read_line storage_kind "/sys/class/block/$disk_name/device/type" || return 1
-    case "$storage_media:$storage_kind" in nanokvm:SD|pro-sd:SD|go-sd:SD|pro-emmc:MMC) ;; *) return 1 ;; esac
-    # The Go has no root PARTUUID on its command line: require the image's disk ID.
-    if [ "$storage_media" = go-sd ]; then
-        [ "$(hexdump -v -s 440 -n 4 -e '1/1 "%02x"' "$disk" 2>/dev/null)" = 47564b4f ] || return 1
+    case "$storage_media:$storage_kind" in nanokvm:SD|pro-sd:SD|go-sd:SD|picokvm-sd:SD|pro-emmc:MMC) ;; *) return 1 ;; esac
+    # The Go and PicoKVM have no root PARTUUID on their command line: require
+    # the image's disk ID.
+    case "$storage_media" in
+        go-sd) storage_disk_id=47564b4f ;;
+        picokvm-sd) storage_disk_id=4b504b4f ;;
+        *) storage_disk_id= ;;
+    esac
+    if [ -n "$storage_disk_id" ]; then
+        [ "$(hexdump -v -s 440 -n 4 -e '1/1 "%02x"' "$disk" 2>/dev/null)" = "$storage_disk_id" ] || return 1
     fi
     for storage_number in 1 2 3 4; do
         storage_sys=/sys/class/block/${disk_name}p${storage_number}
