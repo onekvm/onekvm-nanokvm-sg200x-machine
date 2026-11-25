@@ -49,9 +49,9 @@ The recipe keeps its existing package name for upgrade compatibility.
 The machine package installs its model-specific presets under
 `/usr/share/onekvm/edid/presets/`. Core Display settings and the EDID editor
 read this same directory, and presets remain available without the editor.
-Core installs `factory.edid.bin` and `1080p60.edid.bin`, shared by every
-machine (the Core recipe in `onekvm-distro`); factory reset uses this file.
-Machine packages supply only their other presets.
+The package also installs `factory.edid.bin` and `1080p60.edid.bin`, the same
+file on every machine (`onekvm-machine-files.inc` in `onekvm-distro`); factory
+reset uses it. This repository supplies only the other presets.
 
 Display settings and the editor label known presets as `width×height @ refresh Hz`
 using the preferred mode and nominal refresh rate. `factory` is labelled

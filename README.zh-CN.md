@@ -50,9 +50,9 @@ Core 取此值与视频后端上限的较小值；手动码率仍使用后端支
 
 机型包将对应机型的 EDID 预设安装到 `/usr/share/onekvm/edid/presets/`。
 Core 显示设置和 EDID 编辑器读取同一个目录，未安装编辑器时预设仍可使用。
-所有机型共用的 `factory.edid.bin` 和 `1080p60.edid.bin` 由 Core 安装
-（`onekvm-distro` 的 Core 配方），恢复出厂 EDID 使用这一份；机型包只提供
-其余适合自身硬件的预设。
+机型包同时安装 `factory.edid.bin` 和 `1080p60.edid.bin`，所有机型是同一个
+文件（`onekvm-distro` 的 `onekvm-machine-files.inc`），恢复出厂 EDID 使用这一份；
+本仓库只提供其余适合自身硬件的预设。
 
 显示设置和编辑器按首选模式及标称刷新率，将已知预设统一显示为
 `宽×高 @ 刷新率 Hz`，`factory` 显示为“出厂预设”。
