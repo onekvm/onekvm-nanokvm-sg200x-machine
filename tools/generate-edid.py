@@ -9,4 +9,4 @@ from edid_modes import generate_common
 
 
 if __name__ == "__main__":
-    generate_common(Path(__file__).resolve().parents[1] / "share/edid", pro=False)
+    generate_common(Path(__file__).resolve().parents[1] / "share/edid", "sg200x")

@@ -84,6 +84,9 @@ LT6911C/D compatibility has not been verified. Factory defaults remain 1080p60.
 The HDMI TMDS clock ceiling covers every advertised timing, including VGA
 fallbacks, rounded up in 5 MHz units. The preset regression checks this ceiling
 and the optional 1080p90 timing.
+Each preset has its own PnP product ID (the factory preset keeps 0x630C), so
+Windows does not reuse an EDID it cached for another preset; the preset
+regression checks that IDs stay unique.
 EDID checksums and timing bounds are checked, but unusual modes still depend
 on the source GPU, loopout display and capture firmware; their presence does
 not mean every mode has been verified on hardware.

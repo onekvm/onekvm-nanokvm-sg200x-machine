@@ -6,6 +6,20 @@ Adding a preset does not establish end-to-end capture support for every source.
 """
 import math
 
+# The shared factory EDID keeps 0x630C. Before per-mode IDs every SG200x
+# preset used 0x0001.
+RESERVED_PRODUCTS = {0x0000, 0x0001, 0x630C}
+
+# Receiver limits per machine catalogue: smallest and largest active size,
+# pixel clock ceiling (kHz) and whether 1920x1080p90 is included.
+MACHINE_LIMITS = {
+    'sg200x': ((1, 1), (2880, 1620), 165000, True),
+    'pro': ((1, 1), (3840, 2160), 297000, True),
+    # Both PicoKVM bridges feed a 1920x1080 encoder. TC358743 accepts
+    # 640x350 to 165 MHz, and its four 594 Mbps CSI lanes stop below 1080p90.
+    'picokvm': ((640, 350), (1920, 1080), 165000, False),
+}
+
 
 RESOLUTIONS = {
     '1:1': [(480, 480), (600, 600), (720, 720), (800, 800), (900, 900), (1024, 1024), (1080, 1080)],
@@ -50,7 +64,20 @@ def mode_timing(width, height, aspect, refresh=60):
         hb += 8
 
 
-def generate_mode(width, height, aspect, pro, refresh=60):
+def product_id(width, height, refresh):
+    """PnP product ID of one mode. Windows caches EDIDs per product ID, so a
+    preset that changes the mode needs an ID of its own."""
+    crc = 0xFFFF
+    for byte in f'{width}x{height}p{refresh}'.encode():
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = (crc << 1 ^ 0x1021 if crc & 0x8000 else crc << 1) & 0xFFFF
+    if crc in RESERVED_PRODUCTS:
+        raise ValueError(f'{width}x{height}p{refresh} hashes to a reserved product ID')
+    return crc
+
+
+def generate_mode(width, height, aspect, refresh=60):
     clock, hb, hf, hs, vb, vf, vs, flags = mode_timing(width, height, aspect, refresh)
     dtd = bytearray(18)
     dtd[:2] = (round(clock / 10)).to_bytes(2, 'little')
@@ -66,7 +93,7 @@ def generate_mode(width, height, aspect, pro, refresh=60):
     base = bytearray(128)
     base[:8] = bytes.fromhex('00ffffffffffff00')
     base[8:10] = bytes.fromhex('3d76')
-    base[10:12] = (0x630C if pro else 1).to_bytes(2, 'little')
+    base[10:12] = product_id(width, height, refresh).to_bytes(2, 'little')
     base[16:25] = bytes((1, 36, 1, 3, 0x80, wc, hc, 120, 0x0E))
     base[25:35] = bytes.fromhex('ee91a3544c99260f5054')
     base[35] = 0x20  # BIOS-safe 640x480p60 only.
@@ -96,23 +123,30 @@ def generate_mode(width, height, aspect, pro, refresh=60):
     return bytes(base + cta)
 
 
-def generate_common(destination, pro):
-    skipped = {(1920, 1080)}
-    if pro:
-        skipped.add((1280, 720))  # Existing 720p60 preset retains its ID.
+def catalogue(machine):
+    """(width, height, aspect) of every p60 preset a machine ships."""
+    (min_w, min_h), (max_w, max_h), max_clock, _ = MACHINE_LIMITS[machine]
+    skipped = {(1920, 1080)}  # The shared factory EDID.
+    if machine == 'pro':
+        skipped.add((1280, 720))  # The Pro's own 720p60 preset.
     for aspect, sizes in RESOLUTIONS.items():
         for width, height in sizes:
-            clock = mode_timing(width, height, aspect)[0]
             if (width, height) in skipped:
                 continue
-            if width > (3840 if pro else 2880) or height > (2160 if pro else 1620):
+            if not (min_w <= width <= max_w and min_h <= height <= max_h):
                 continue
-            if clock > (297000 if pro else 165000):
+            if mode_timing(width, height, aspect)[0] > max_clock:
                 continue
-            (destination / f'{width}x{height}p60.edid.bin').write_bytes(
-                generate_mode(width, height, aspect, pro))
+            yield width, height, aspect
+
+
+def generate_common(destination, machine):
+    for width, height, aspect in catalogue(machine):
+        (destination / f'{width}x{height}p60.edid.bin').write_bytes(
+            generate_mode(width, height, aspect))
 
     # Explicit high-refresh mode for UXC / Pro receivers. It exceeds the
     # 165 MHz limit used for the ordinary SG200x preset catalogue.
-    (destination / '1920x1080p90.edid.bin').write_bytes(
-        generate_mode(1920, 1080, '16:9', pro, refresh=90))
+    if MACHINE_LIMITS[machine][3]:
+        (destination / '1920x1080p90.edid.bin').write_bytes(
+            generate_mode(1920, 1080, '16:9', refresh=90))
