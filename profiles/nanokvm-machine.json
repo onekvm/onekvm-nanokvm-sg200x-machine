@@ -3,6 +3,7 @@
   "vendor": "Sipeed",
   "name": "NanoKVM",
   "video_auto_bitrate_max_kbps": 10000,
+  "camera_max_bitrate_kbps": 4000,
   "led": "led-user",
   "storage": "mmc0",
   "update_repository": "onekvm/onekvm-release-nanokvm",

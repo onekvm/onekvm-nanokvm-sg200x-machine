@@ -45,6 +45,9 @@ Yocto 配方仍保留在 `onekvm-distro`，因为其中包含发行版专用依�
 机型配置的 `video_auto_bitrate_max_kbps` 定义自动自适应码率上限：Cube 为
 10000 kbit/s（10 Mbps），Pro 的机型检测配置为 20000 kbit/s（20 Mbps）。
 Core 取此值与视频后端上限的较小值；手动码率仍使用后端支持范围。
+`camera_max_bitrate_kbps` 为 4000 kbit/s：USB 摄像头的端点改为每 1 ms 一包，
+每秒中断从 4000 次降到 1000 次。1080p60 透传时 CPU 约 55%（每 250 µs 一包时
+接近 100%，摄像头掉帧、KVM 画面延迟变大）。
 
 ## EDID 预设
 
