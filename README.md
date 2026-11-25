@@ -48,9 +48,10 @@ The recipe keeps its existing package name for upgrade compatibility.
 
 The machine package installs its model-specific presets under
 `/usr/share/onekvm/edid/presets/`. Core Display settings and the EDID editor
-read this same directory. Presets remain available without the editor, and
-factory reset uses this machine's `factory.edid.bin`. Other machine packages
-can supply their own files at the same path.
+read this same directory, and presets remain available without the editor.
+Core installs `factory.edid.bin` and `1080p60.edid.bin`, shared by every
+machine (the Core recipe in `onekvm-distro`); factory reset uses this file.
+Machine packages supply only their other presets.
 
 Display settings and the editor label known presets as `width×height @ refresh Hz`
 using the preferred mode and nominal refresh rate. `factory` is labelled
@@ -59,8 +60,6 @@ file names, EDID bytes and custom file names remain unchanged.
 
 SG200x NanoKVM presets:
 
-- `factory.edid.bin` — default 1920×1080 @ 60 Hz
-- `1080p60.edid.bin` — 1920×1080 @ 60 Hz
 - `720p90.edid.bin` — 1280×720 @ 90 Hz
 - `1440p30.edid.bin` — 2560×1440 @ 30 Hz
 - `1620p30.edid.bin` — 2880×1620 @ 30 Hz (maximum native SG2002 VPSS output)
@@ -84,7 +83,7 @@ LT6911C/D compatibility has not been verified. Factory defaults remain 1080p60.
 17:9 and 21:9 include nominal DCI/ultrawide modes such as 2048×1080 and 2560×1080.
 The HDMI TMDS clock ceiling covers every advertised timing, including VGA
 fallbacks, rounded up in 5 MHz units. The preset regression checks this ceiling
-as well as the 1080p60 factory default and the optional 1080p90 timing.
+and the optional 1080p90 timing.
 EDID checksums and timing bounds are checked, but unusual modes still depend
 on the source GPU, loopout display and capture firmware; their presence does
 not mean every mode has been verified on hardware.

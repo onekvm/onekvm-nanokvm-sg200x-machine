@@ -97,4 +97,4 @@ for pro in [False]:
             assert int.from_bytes(d[:2], 'little') * 10 <= 297000, name
     for aspect, sizes in RESOLUTIONS.items():
         assert any((directory / f'{w}x{h}p60.edid.bin').exists() for w, h in sizes), aspect
-    print(('Pro' if pro else 'SG200x'), len(files), 'EDIDs: checksums, timing, TMDS ceilings, default 1080p60 and optional 1080p90 passed')
+    print(('Pro' if pro else 'SG200x'), len(files), 'EDIDs: checksums, timing, TMDS ceilings and optional 1080p90 passed')
