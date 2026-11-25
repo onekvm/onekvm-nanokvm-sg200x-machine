@@ -5,7 +5,7 @@ import sys
 
 root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(root / 'tools'))
-from edid_modes import RESOLUTIONS
+from edid_modes import RESERVED_PRODUCTS, RESOLUTIONS
 
 # Pixel clocks from CTA-861, independent of the preset generators. Include
 # fallback VICs: even a 25 MHz preferred timing advertises 25.175 MHz VGA.
@@ -42,6 +42,13 @@ for pro in [False]:
     files = list(directory.glob('*.edid.bin'))
     assert (directory / '1920x1080p90.edid.bin').is_file()
     assert not (directory / '1080p60-4k30.edid.bin').exists()
+    # Windows caches EDIDs per PnP product ID: one ID per preset.
+    products = {}
+    for path in files:
+        product = int.from_bytes(path.read_bytes()[10:12], 'little')
+        assert product not in RESERVED_PRODUCTS, path
+        assert product not in products, (path, products[product])
+        products[product] = path.name
     for path in files:
         data = path.read_bytes()
         assert len(data) == 256 and data[:8] == bytes.fromhex('00ffffffffffff00'), path
