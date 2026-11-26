@@ -74,10 +74,24 @@ printf '32\n' >"$filesystem/bootgrow"
 rm "$work/formatted"
 if (nanokvm_inspect_carrier); then echo 'accepted unknown boot size' >&2; exit 1; fi
 [ ! -e "$work/formatted" ]
+[ ! -e "$filesystem/onekvm-boot-error" ]
 echo 'boot expansion preservation and legacy compatibility tests passed'
 
-# Language is read as data; no other CLI statement is evaluated by the shell.
+# Without a splash an ordinary boot leaves the boot FAT alone.
 nanokvm_splash() { :; }
+printf 'set system language zh\n' >"$filesystem/firstboot.txt"
+mount() { echo mounted >>"$work/language-mounts"; }
+nanokvm_read_splash_language
+[ -z "$splash_language" ] && [ ! -e "$work/language-mounts" ]
+mount() {
+    for mount_arg do mount_target=$mount_arg; done
+    rmdir "$mount_target"
+    ln -s "$filesystem" "$mount_target"
+}
+# Language is read as data; no other CLI statement is evaluated by the shell.
+printf '#!/bin/sh\n' >"$work/bin/onekvm-boot-splash"
+chmod +x "$work/bin/onekvm-boot-splash"
+PATH=$work/bin:$PATH
 for language in en zh zh_tw; do
     printf 'set system language %s\nrequest system setup complete\n' "$language" >"$filesystem/firstboot.txt"
     nanokvm_read_splash_language
@@ -90,3 +104,34 @@ rm "$filesystem/firstboot.txt"
 nanokvm_read_splash_language
 [ "$splash_language" = en ]
 echo 'firstboot splash language and non-executable configuration tests passed'
+
+
+# Userdata is probed for ext4 and f2fs first; anything else still gets the
+# full probe, so an unknown filesystem never looks empty. Like util-linux on a
+# partition, the filtered probe succeeds without a type when only the
+# partition table entry matches.
+blkid() {
+    echo "$*" >>"$work/blkid-calls"
+    case " $* " in
+        *' -n ext4,f2fs '*)
+            [ "$TEST_FS" = f2fs ] || return "${TEST_FILTERED_STATUS:-0}" ;;
+    esac
+    [ -z "$TEST_FS" ] && return 2
+    printf '%s\n' "$TEST_FS"
+}
+TEST_FS=f2fs
+[ "$(nanokvm_filesystem_type /dev/mmcblk0p4)" = f2fs ]
+[ "$(wc -l <"$work/blkid-calls")" = 1 ]
+rm "$work/blkid-calls"
+for TEST_FILTERED_STATUS in 0 2; do
+    TEST_FS=btrfs
+    [ "$(nanokvm_filesystem_type /dev/mmcblk0p4)" = btrfs ]
+    TEST_FS=squashfs
+    [ "$(nanokvm_filesystem_type /dev/mmcblk0p2)" = squashfs ]
+    TEST_FS=
+    [ -z "$(nanokvm_filesystem_type /dev/mmcblk0p4)" ]
+done
+[ "$(wc -l <"$work/blkid-calls")" = 12 ]
+unset -f blkid
+unset TEST_FILTERED_STATUS
+echo 'userdata filesystem probe tests passed'

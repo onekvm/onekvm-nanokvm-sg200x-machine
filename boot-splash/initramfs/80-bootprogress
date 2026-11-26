@@ -1,0 +1,12 @@
+#!/bin/sh
+# Keep the Pro Desk boot bar moving on a normal boot. Recovery (20-recovery) has
+# already taken the panel if it runs; the animator also stops by itself when the
+# bar disappears, and the screen service stops it with `finish`.
+
+bootprogress_enabled() {
+    command -v onekvm-boot-splash >/dev/null 2>&1 && [ -e /dev/fb0 ]
+}
+
+bootprogress_run() {
+    onekvm-boot-splash animate </dev/null >/dev/null 2>&1 &
+}

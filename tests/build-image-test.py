@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check carrier geometry and reject oversized roots before creating output."""
+"""Check carrier geometry, root detection and oversized roots before creating output."""
 import importlib.util
 from pathlib import Path
 import struct
@@ -12,23 +12,49 @@ spec.loader.exec_module(builder)
 CAPACITY = 128 * 1024 * 1024
 
 class ImageTests(unittest.TestCase):
-    def inputs(self, directory, profile, size=4096):
+    def inputs(self, directory, profile, size=4096, fs='squashfs'):
         boot, root = directory / 'boot', directory / 'root'
         with boot.open('wb') as dest:
             dest.truncate((builder.LAYOUTS[profile][2] * 512) if profile == 'pro-emmc' else 36 * 1024 * 1024)
         with root.open('wb') as dest:
-            if size:
+            if size and fs == 'squashfs':
                 header = bytearray(48)
                 header[:4] = b'hsqs'
                 struct.pack_into('<Q', header, 40, size)
                 dest.write(header)
+            elif size and fs == 'erofs':
+                header = bytearray(1024 + 128)
+                struct.pack_into('<I', header, 1024, 0xE0F5E1E2)
+                header[1024 + 12] = 12
+                struct.pack_into('<I', header, 1024 + 36, size >> 12)
+                dest.write(header)
             dest.truncate(size)
         return boot, root
+
+    def test_root_type_is_detected_and_recorded(self):
+        for fs in ('squashfs', 'erofs'):
+            with self.subTest(fs=fs), tempfile.TemporaryDirectory() as work:
+                directory = Path(work)
+                boot, root = self.inputs(directory, 'pro-sd', 8192, fs)
+                self.assertEqual(builder.root_image(root), (fs, 8192))
+                output = directory / 'image'
+                builder.build('pro-sd', boot, root, output, 'test')
+                manifest = dict(line.split('=', 1) for line in Path(str(output) + '.manifest').read_text().splitlines())
+                self.assertEqual(manifest['rootfstype'], fs)
+
+    def test_unknown_root_format_is_rejected_without_output(self):
+        with tempfile.TemporaryDirectory() as work:
+            directory = Path(work)
+            boot, root = self.inputs(directory, 'pro-sd', 8192, 'ext4')
+            output = directory / 'image'
+            with self.assertRaisesRegex(ValueError, 'neither SquashFS nor EROFS'):
+                builder.build('pro-sd', boot, root, output, 'test')
+            self.assertFalse(output.exists())
 
     def test_all_media_have_128_mib_and_preserve_cube_alignment(self):
         expected = {'nanokvm': (264192, 528384, 790528),
                     'pro-sd': (264192, 526336, 788480),
-                    'pro-emmc': (568832, 830976, 1093120)}
+                    'pro-emmc': (303104, 565248, 827392)}
         for profile, offsets in expected.items():
             with self.subTest(profile=profile):
                 _, _, _, a, count, b, data = builder.LAYOUTS[profile]
@@ -66,7 +92,10 @@ class ImageTests(unittest.TestCase):
                 self.assertEqual(int(manifest['installed_rootfs_a_start_sector']), builder.LAYOUTS[profile][3])
                 self.assertEqual(int(manifest['userdata_start_sector']), builder.LAYOUTS[profile][6])
                 if profile == 'pro-emmc':
-                    self.assertIn('128M@157024256(pro-boot),128M@291241984(pro-rootfs-a),128M(pro-rootfs-b)', manifest['blkdevparts'])
+                    self.assertEqual(manifest['blkdevparts'],
+                                     'mmcblk0:128M@20971520(pro-boot),128M@155189248(pro-rootfs-a),128M(pro-rootfs-b),-(pro-userdata)')
+                    self.assertEqual(manifest['bootloader_preserve_bytes'], '20971520')
+                    self.assertNotIn('boot_selector_offset', manifest)
                     with output.open('rb') as source:
                         self.assertEqual(source.read(512), bytes(512))
                 else:
@@ -79,6 +108,18 @@ class ImageTests(unittest.TestCase):
                     self.assertEqual(struct.unpack_from('<II', mbr, 470), (source_root, 8))
                     self.assertEqual(output.stat().st_size, source_root * 512 + 4096 + 512)
                     self.assertLess(output.stat().st_size, CAPACITY)
+
+    def test_policy_capability_is_explicit_and_covered_by_digest(self):
+        for enabled in (False, True):
+            with self.subTest(enabled=enabled), tempfile.TemporaryDirectory() as work:
+                directory = Path(work)
+                output = directory / 'payload'
+                output.write_bytes(b'test payload')
+                payload_hash, image_hash = builder.append_trailer(output, 'nanokvm', 12, 'test', enabled)
+                trailer = output.read_bytes()[12:]
+                self.assertEqual(struct.unpack_from('<H', trailer, 22)[0], int(enabled))
+                self.assertEqual(builder.digest(output, size=12), payload_hash)
+                self.assertEqual(builder.digest(output, size=12 + 480), image_hash)
 
     def test_exact_slot_capacity_is_accepted(self):
         with tempfile.TemporaryDirectory() as work:

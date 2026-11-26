@@ -34,11 +34,21 @@ def layout(disk_id, boot_at, boot_size, root_at, root_b_gap=0):
             root_at + ROOTFS_SLOT_SECTORS + root_b_gap,
             root_at + 2 * ROOTFS_SLOT_SECTORS + root_b_gap)
 
+# Stock SPL loads ddrinit, ATF, U-Boot and OP-TEE from fixed offsets.
+# optee_b ends at byte 20709376. The four OS partitions use the same sizes
+# as the Pro SD card and start on the next 1 MiB boundary. There is no MBR.
+PRO_EMMC_BOOT_SECTOR = 20 * 1024 * 1024 // 512
+PRO_EMMC_ROOT_SECTOR = PRO_EMMC_BOOT_SECTOR + ROOTFS_SLOT_SECTORS
+
+def emmc_blkdevparts(boot_at, root_at):
+    return ('mmcblk0:128M@%d(pro-boot),128M@%d(pro-rootfs-a),'
+            '128M(pro-rootfs-b),-(pro-userdata)') % (boot_at * 512, root_at * 512)
+
 LAYOUTS = {
     # Keep the 1 MiB gap before B for the Cube's 2 MiB alignment.
     'nanokvm': layout(0x4f4b564d, 1, 262144, 264192, root_b_gap=2048),
     'pro-sd': layout(0x4f4b5650, 2048, 262144, 264192),
-    'pro-emmc': layout(None, 306688, 262144, 568832),
+    'pro-emmc': layout(None, PRO_EMMC_BOOT_SECTOR, 262144, PRO_EMMC_ROOT_SECTOR),
 }
 
 def digest(path, offset=0, size=None):
@@ -64,7 +74,7 @@ def _fixed_ascii(value, size, field):
     return encoded + bytes(size - len(encoded))
 
 
-def make_trailer(profile, payload_size, payload_sha256, build_id):
+def make_trailer(profile, payload_size, payload_sha256, build_id, network_policy=False):
     """Return metadata followed by its full-image digest placeholder.
 
     The final digest is calculated by :func:`append_trailer` after the
@@ -89,7 +99,7 @@ def make_trailer(profile, payload_size, payload_sha256, build_id):
     metadata[:16] = TRAILER_MAGIC
     struct.pack_into('<HHBBHQHH', metadata, 16,
                      TRAILER_VERSION, TRAILER_METADATA_SIZE,
-                     PROFILE_IDS[profile], MEDIA_IDS[profile], 0,
+                     PROFILE_IDS[profile], MEDIA_IDS[profile], int(network_policy),
                      payload_size, 96, 0)
     metadata[36:68] = payload_digest
     metadata[68:164] = build
@@ -98,9 +108,9 @@ def make_trailer(profile, payload_size, payload_sha256, build_id):
     return bytes(metadata)
 
 
-def append_trailer(output, profile, payload_size, build_id):
+def append_trailer(output, profile, payload_size, build_id, network_policy=False):
     payload_sha256 = digest(output, size=payload_size)
-    metadata = make_trailer(profile, payload_size, payload_sha256, build_id)
+    metadata = make_trailer(profile, payload_size, payload_sha256, build_id, network_policy)
     with open(output, 'ab') as dest:
         dest.write(metadata)
         dest.flush()
@@ -113,7 +123,21 @@ def append_trailer(output, profile, payload_size, build_id):
     assert Path(output).stat().st_size == payload_size + TRAILER_SIZE
     return payload_sha256, full_sha256
 
-def build(profile, boot, rootfs, output, build_id, raw=()):
+def root_image(rootfs):
+    """Return (rootfstype, used bytes) of a SquashFS or EROFS root image."""
+    with open(rootfs, 'rb') as source:
+        header = source.read(1024 + 128)
+    if header[:4] == b'hsqs':
+        return 'squashfs', struct.unpack_from('<Q', header, 40)[0]
+    if len(header) == 1024 + 128 and struct.unpack_from('<I', header, 1024)[0] == 0xE0F5E1E2:
+        blkszbits = header[1024 + 12]
+        # 48-bit block counts (feature_incompat 0x80) are not used for slots.
+        assert not struct.unpack_from('<I', header, 1024 + 80)[0] & 0x80, 'EROFS 48-bit layout'
+        return 'erofs', struct.unpack_from('<I', header, 1024 + 36)[0] << blkszbits
+    raise ValueError('rootfs is neither SquashFS nor EROFS')
+
+
+def build(profile, boot, rootfs, output, build_id, raw=(), network_policy=False):
     disk_id, boot_at, target_boot_size, target_root_at, slot_size, root_b, data_at = LAYOUTS[profile]
     boot_bytes = Path(boot).stat().st_size
     boot_size = boot_bytes // 512
@@ -128,11 +152,10 @@ def build(profile, boot, rootfs, output, build_id, raw=()):
         root_at = ((boot_at + boot_size + 2047) // 2048) * 2048
     root_bytes = Path(rootfs).stat().st_size
     if not 0 < root_bytes <= slot_size * 512:
-        raise ValueError('SquashFS is %d bytes; rootfs slot capacity is %d bytes (128 MiB)' %
+        raise ValueError('rootfs is %d bytes; rootfs slot capacity is %d bytes (128 MiB)' %
                          (root_bytes, slot_size * 512))
-    with open(rootfs, 'rb') as source:
-        header = source.read(48)
-    assert header[:4] == b'hsqs' and 4096 <= struct.unpack_from('<Q', header, 40)[0] <= root_bytes
+    rootfstype, root_used = root_image(rootfs)
+    assert 4096 <= root_used <= root_bytes
     root_sectors = (root_bytes + 511) // 512
     payloads = [(Path(boot), boot_at * 512), (Path(rootfs), root_at * 512)]
     if profile == 'pro-emmc':
@@ -168,17 +191,17 @@ def build(profile, boot, rootfs, output, build_id, raw=()):
         assert digest(path) == digest(output, at, path.stat().st_size), 'payload checksum mismatch'
     if profile == 'pro-emmc':
         fd = os.open(output, os.O_RDONLY)
-        assert os.lseek(fd, 0, os.SEEK_DATA) >= 22806528, 'vendor boot prefix was written'
+        assert os.lseek(fd, 0, os.SEEK_DATA) >= boot_at * 512, 'vendor boot prefix was written'
         os.close(fd)
-    payload_sha256, image_sha256 = append_trailer(output, profile, image_size, build_id)
+    payload_sha256, image_sha256 = append_trailer(output, profile, image_size, build_id, network_policy)
     file_sha256 = digest(output)
     manifest = dict(build_id=build_id, media=profile, image_size=image_size,
                     file_size=image_size + TRAILER_SIZE,
                     trailer_offset=image_size, trailer_size=TRAILER_SIZE,
-                    metadata_version=TRAILER_VERSION,
+                    metadata_version=TRAILER_VERSION, network_policy=int(network_policy),
                     payload_sha256=payload_sha256, image_sha256=image_sha256,
                     file_sha256=file_sha256,
-                    partition_table=table, rootfstype='squashfs', overlay='shared-upper',
+                    partition_table=table, rootfstype=rootfstype, overlay='shared-upper',
                     first_boot_partitions=4 if table == 'cmdline' else 2, target_partitions=4,
                     rootfs_bytes=root_bytes, rootfs_slot_bytes=slot_size * 512,
                     rootfs_sha256=digest(rootfs), boot_sha256=digest(boot),
@@ -192,9 +215,9 @@ def build(profile, boot, rootfs, output, build_id, raw=()):
     if disk_id:
         manifest['disk_id'] = '%08x' % disk_id
     else:
-        manifest.update(bootloader_preserve_bytes=22806528, boot0='absent',
-                        boot_selector_offset=156958720, rootfs_b_firstboot='copy-A',
-                        blkdevparts='mmcblk0:128M@157024256(pro-boot),128M@291241984(pro-rootfs-a),128M(pro-rootfs-b),-(pro-userdata)')
+        manifest.update(bootloader_preserve_bytes=boot_at * 512, boot0='absent',
+                        rootfs_b_firstboot='copy-A',
+                        blkdevparts=emmc_blkdevparts(boot_at, target_root_at))
     Path(str(output) + '.manifest').write_text(''.join('%s=%s\n' % pair for pair in sorted(manifest.items())))
     Path(str(output) + '.sha256').write_text('%s  %s\n' % (file_sha256, Path(output).name))
 
@@ -203,6 +226,7 @@ if __name__ == '__main__':
     for name in ('profile', 'boot', 'rootfs', 'output', 'build-id'):
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--raw', action='append', default=[], help='FILE@BYTE_OFFSET (eMMC only)')
+    parser.add_argument('--network-policy', action='store_true', help='Rootfs implements installer network policy v1')
     args = parser.parse_args()
     raw = [(Path(pair.rsplit('@', 1)[0]), int(pair.rsplit('@', 1)[1])) for pair in args.raw]
-    build(args.profile, args.boot, args.rootfs, args.output, args.build_id, raw)
+    build(args.profile, args.boot, args.rootfs, args.output, args.build_id, raw, args.network_policy)

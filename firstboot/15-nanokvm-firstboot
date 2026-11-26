@@ -7,30 +7,292 @@ nanokvm_enabled() {
 }
 
 nanokvm_die() {
-    nanokvm_splash error
+    nanokvm_oled_error
+    # The record is best-effort. A save failure must still reach fatal.
+    nanokvm_save_boot_error "$1" || true
+    if [ "${nanokvm_boot_error_saved:-false}" = true ]; then
+        nanokvm_splash --message "OneKVM NanoKVM storage migration: $1" error-saved
+    else
+        nanokvm_splash --message "OneKVM NanoKVM storage migration: $1" error
+    fi
     fatal "OneKVM NanoKVM storage migration: $1"
 }
 
+# Userdata creation failures usually come from a failing card.
+nanokvm_die_userdata() {
+    nanokvm_die "$1. The storage medium may be unreliable."
+}
+
 nanokvm_splash() {
+    if [ "${1:-}" = install ] && [ -n "${2:-}" ]; then
+        nanokvm_oled_step=$2
+        nanokvm_oled_state install "$2"
+    fi
     command -v onekvm-boot-splash >/dev/null 2>&1 || return 0
+    [ "${1:-}" != boot ] || set -- --progress "${splash_progress:-5}" "$@"
     onekvm-boot-splash --language "${splash_language:-en}" "$@" 2>/dev/null || true
 }
 
+# The root system continues the boot bar with onekvm-boot-progress units.
+nanokvm_splash_progress() {
+    splash_progress=$1
+    command -v onekvm-boot-splash >/dev/null 2>&1 || return 0
+    onekvm-boot-splash progress "$1" 2>/dev/null || true
+}
+
+# Leave onekvm-boot-error/try-N.zip on the boot FAT.
+# If packing fails, leave onekvm-boot-error/try-N/ instead. Never both.
+# Never read firstboot.txt.
+nanokvm_boot_error_reason_file() {
+    boot_error_record=$1
+    boot_error_text=$2
+    boot_error_try=$3
+    boot_error_packed=$4
+    {
+        if [ "$boot_error_packed" = zip ]; then
+            case ${splash_language:-en} in
+                zh) printf '安装已暂停。原因写在下面。这次记录是 SD 卡 onekvm-boot-error/%s.zip。\n' "$boot_error_try" ;;
+                zh_tw) printf '安裝已暫停。原因寫在下面。這次記錄是 SD 卡 onekvm-boot-error/%s.zip。\n' "$boot_error_try" ;;
+                *) printf 'Setup paused. The reason is below. This record is onekvm-boot-error/%s.zip on the SD card.\n' "$boot_error_try" ;;
+            esac
+        else
+            case ${splash_language:-en} in
+                zh) printf '安装已暂停。原因写在下面。这次记录在 SD 卡 onekvm-boot-error/%s 文件夹。\n' "$boot_error_try" ;;
+                zh_tw) printf '安裝已暫停。原因寫在下面。這次記錄在 SD 卡 onekvm-boot-error/%s 資料夾。\n' "$boot_error_try" ;;
+                *) printf 'Setup paused. The reason is below. This record is the onekvm-boot-error/%s folder on the SD card.\n' "$boot_error_try" ;;
+            esac
+        fi
+        printf '\nreason: %s\n' "$boot_error_text"
+    } >"$boot_error_record/reason.txt"
+}
+
+nanokvm_write_boot_error_files() {
+    boot_error_record=$1
+    boot_error_text=$2
+    boot_error_try=$3
+    nanokvm_boot_error_reason_file "$boot_error_record" "$boot_error_text" "$boot_error_try" "$4" || return 1
+    if [ -r "${ONEKVM_CMDLINE_FILE:-/proc/cmdline}" ]; then
+        cat "${ONEKVM_CMDLINE_FILE:-/proc/cmdline}" >"$boot_error_record/cmdline.txt" || return 1
+    else
+        : >"$boot_error_record/cmdline.txt" || return 1
+    fi
+    {
+        printf 'media: %s\nslot: %s\ndisk: %s\nloader: %s\n' \
+            "${storage_media:-}" "${storage_slot:-}" "${disk:-}" "${loader:-}"
+        boot_error_sysfs=${ONEKVM_STORAGE_SYSFS:-/sys/class/block}
+        if [ -n "${disk_name:-}" ] && [ -d "$boot_error_sysfs/$disk_name" ]; then
+            printf 'disk-size: %s\n' "$(cat "$boot_error_sysfs/$disk_name/size" 2>/dev/null || printf unknown)"
+            for boot_error_part in "$boot_error_sysfs/$disk_name"p*; do
+                [ -d "$boot_error_part" ] || continue
+                printf 'partition: %s start=%s size=%s\n' \
+                    "${boot_error_part##*/}" \
+                    "$(cat "$boot_error_part/start" 2>/dev/null || printf -)" \
+                    "$(cat "$boot_error_part/size" 2>/dev/null || printf -)"
+            done
+        fi
+    } >"$boot_error_record/storage.txt" || return 1
+    if [ -r /proc/self/mountinfo ]; then
+        awk 'NR<=80 { print }' /proc/self/mountinfo >"$boot_error_record/mounts.txt" || return 1
+    else
+        : >"$boot_error_record/mounts.txt" || return 1
+    fi
+    if command -v dmesg >/dev/null 2>&1; then
+        dmesg 2>/dev/null | tail -n 80 >"$boot_error_record/dmesg.txt" || true
+    fi
+    [ -f "$boot_error_record/dmesg.txt" ] || : >"$boot_error_record/dmesg.txt"
+}
+
+nanokvm_pack_boot_error() {
+    boot_error_record=$1
+    boot_error_zip=$2
+    command -v onekvm-boot-error-zip >/dev/null 2>&1 || return 1
+    boot_error_zip_tmp=$boot_error_zip.tmp
+    rm -f "$boot_error_zip_tmp" || return 1
+    onekvm-boot-error-zip "$boot_error_zip_tmp" \
+        "$boot_error_record/reason.txt" \
+        "$boot_error_record/cmdline.txt" \
+        "$boot_error_record/storage.txt" \
+        "$boot_error_record/mounts.txt" \
+        "$boot_error_record/dmesg.txt" || {
+        rm -f "$boot_error_zip_tmp"
+        return 1
+    }
+    mv "$boot_error_zip_tmp" "$boot_error_zip" || {
+        rm -f "$boot_error_zip_tmp"
+        return 1
+    }
+}
+
+nanokvm_write_boot_error() {
+    boot_error_dest=$1
+    [ -d "$boot_error_dest" ] || return 1
+    boot_error_dir=$boot_error_dest/onekvm-boot-error
+    mkdir -p "$boot_error_dir" || return 1
+    boot_error_next=1
+    for boot_error_existing in "$boot_error_dir"/try-* "$boot_error_dir"/.try-*; do
+        [ -e "$boot_error_existing" ] || continue
+        boot_error_base=${boot_error_existing##*/}
+        boot_error_base=${boot_error_base#.}
+        case "$boot_error_base" in
+            try-*.zip)
+                boot_error_number=${boot_error_base#try-}
+                boot_error_number=${boot_error_number%.zip}
+                ;;
+            try-*) boot_error_number=${boot_error_base#try-} ;;
+            *) continue ;;
+        esac
+        case "$boot_error_number" in
+            ''|*[!0-9]*|0*) continue ;;
+        esac
+        if [ "$boot_error_number" -ge "$boot_error_next" ]; then
+            boot_error_next=$((boot_error_number + 1))
+        fi
+    done
+    boot_error_try=try-$boot_error_next
+    boot_error_record=$boot_error_dir/.$boot_error_try
+    rm -rf "$boot_error_record"
+    mkdir "$boot_error_record" || return 1
+    if ! nanokvm_write_boot_error_files "$boot_error_record" "$2" "$boot_error_try" zip; then
+        rm -rf "$boot_error_record"
+        return 1
+    fi
+    if [ -e "$boot_error_dir/$boot_error_try" ] || [ -e "$boot_error_dir/$boot_error_try.zip" ]; then
+        rm -rf "$boot_error_record"
+        return 1
+    fi
+    if nanokvm_pack_boot_error "$boot_error_record" "$boot_error_dir/$boot_error_try.zip"; then
+        rm -rf "$boot_error_record"
+        if [ -e "$boot_error_record" ]; then
+            rm -f "$boot_error_dir/$boot_error_try.zip"
+            nanokvm_boot_error_publish_folder "$boot_error_record" "$boot_error_dir/$boot_error_try" "$2" "$boot_error_try" || return 1
+        else
+            sync -f "$boot_error_dir/$boot_error_try.zip" 2>/dev/null || sync || return 1
+        fi
+    else
+        nanokvm_boot_error_publish_folder "$boot_error_record" "$boot_error_dir/$boot_error_try" "$2" "$boot_error_try" || return 1
+    fi
+    return 0
+}
+
+nanokvm_boot_error_publish_folder() {
+    boot_error_record=$1
+    boot_error_final=$2
+    nanokvm_boot_error_reason_file "$boot_error_record" "$3" "$4" files || return 1
+    rm -f "$boot_error_final.zip" "$boot_error_final.zip.tmp" || return 1
+    if [ -e "$boot_error_final" ]; then
+        return 1
+    fi
+    mv "$boot_error_record" "$boot_error_final" || return 1
+    sync -f "$boot_error_final/reason.txt" 2>/dev/null || sync || return 1
+    return 0
+}
+
+nanokvm_boot_error_open() {
+    boot_error_mount=
+    boot_error_owned=false
+    boot_error_was_ro=false
+    [ -b "${loader:-}" ] || {
+        printf 'OneKVM: cannot save boot error: boot partition unavailable (%s)\n' "${loader:-unidentified}" >&2
+        return 1
+    }
+    boot_error_name=${loader##*/}
+    boot_error_sysfs=${ONEKVM_STORAGE_SYSFS:-/sys/class/block}
+    boot_error_dev=$(cat "$boot_error_sysfs/$boot_error_name/dev") || return 1
+    boot_error_mounter=$(command -v mount) || return 1
+    boot_error_mount=$(awk -v part="$boot_error_dev" '$3 == part { print $5; exit }' /proc/self/mountinfo 2>/dev/null || true)
+    if [ -n "$boot_error_mount" ]; then
+        boot_error_opts=$(awk -v part="$boot_error_dev" '$3 == part { print $6; exit }' /proc/self/mountinfo 2>/dev/null || true)
+        case "$boot_error_opts" in
+            ro|ro,*|*,ro|*,ro,*)
+                "$boot_error_mounter" -o remount,rw -- "$boot_error_mount" || return 1
+                boot_error_was_ro=true
+                ;;
+        esac
+        return 0
+    fi
+    boot_error_mount=${migration_dir:-/run}/onekvm-boot-error-mnt
+    mkdir -p "$boot_error_mount" || return 1
+    if command -v timeout >/dev/null 2>&1; then
+        # /init may know PATH without exporting it to timeout.
+        timeout -k 2 5 "$boot_error_mounter" -t vfat -o rw,nodev,nosuid,noexec -- "$loader" "$boot_error_mount" || {
+            rmdir "$boot_error_mount" 2>/dev/null || true
+            boot_error_mount=
+            return 1
+        }
+    elif ! "$boot_error_mounter" -t vfat -o rw,nodev,nosuid,noexec -- "$loader" "$boot_error_mount"; then
+        rmdir "$boot_error_mount" 2>/dev/null || true
+        boot_error_mount=
+        return 1
+    fi
+    boot_error_owned=true
+    return 0
+}
+
+nanokvm_boot_error_close() {
+    if [ "${boot_error_owned:-false}" = true ]; then
+        umount "$boot_error_mount" 2>/dev/null || true
+        rmdir "$boot_error_mount" 2>/dev/null || true
+    elif [ "${boot_error_was_ro:-false}" = true ]; then
+        mount -o remount,ro -- "$boot_error_mount" 2>/dev/null || true
+    fi
+    boot_error_owned=false
+    boot_error_was_ro=false
+    return 0
+}
+
+nanokvm_save_boot_error() {
+    nanokvm_boot_error_saved=false
+    if [ -n "${ONEKVM_BOOT_ERROR_DIR:-}" ]; then
+        [ -n "${splash_language:-}" ] || nanokvm_parse_language "$ONEKVM_BOOT_ERROR_DIR/firstboot.txt"
+        if nanokvm_write_boot_error "$ONEKVM_BOOT_ERROR_DIR" "$1"; then
+            nanokvm_boot_error_saved=true
+        else
+            printf 'OneKVM: cannot save boot error in %s\n' "$ONEKVM_BOOT_ERROR_DIR" >&2
+        fi
+        return 0
+    fi
+    # Tests and a normal shell must not mount the host disk. Init is pid 1.
+    [ "$$" -eq 1 ] || return 0
+    if nanokvm_boot_error_open; then
+        [ -n "${splash_language:-}" ] || nanokvm_parse_language "$boot_error_mount/firstboot.txt"
+        if nanokvm_write_boot_error "$boot_error_mount" "$1"; then
+            nanokvm_boot_error_saved=true
+        else
+            printf 'OneKVM: cannot save boot error in %s\n' "$boot_error_mount" >&2
+        fi
+    else
+        printf 'OneKVM: cannot open boot partition for error record\n' >&2
+    fi
+    nanokvm_boot_error_close || true
+    return 0
+}
+
+# firstboot.txt contains credentials and CLI statements, never shell code.
+# Read only the installer's canonical language statement, without eval/source.
+nanokvm_parse_language() {
+    splash_language=en
+    [ -f "$1" ] || return 0
+    splash_language=$(awk '
+        $1 == "set" && $2 == "system" && $3 == "language" && NF == 4 {
+            if ($4 == "en" || $4 == "zh" || $4 == "zh_tw") value=$4
+        }
+        END { print value == "" ? "en" : value }
+    ' "$1")
+}
+
 nanokvm_read_splash_language() {
-    # firstboot.txt contains credentials and CLI statements, never shell code.
-    # Read only the installer's canonical language statement, without eval/source.
+    # Only the splash shows text this early. Without it an ordinary boot never
+    # needs the language, so it does not mount the boot FAT for it; a boot
+    # error reads the language from the FAT it writes its record to.
+    if ! command -v onekvm-boot-splash >/dev/null 2>&1; then
+        splash_language=
+        return 0
+    fi
     splash_language=en
     language_mount=$migration_dir/language
     mkdir -p "$language_mount" || return 0
     if mount -t vfat -o ro,nodev,nosuid,noexec "$loader" "$language_mount"; then
-        if [ -f "$language_mount/firstboot.txt" ]; then
-            splash_language=$(awk '
-                $1 == "set" && $2 == "system" && $3 == "language" && NF == 4 {
-                    if ($4 == "en" || $4 == "zh" || $4 == "zh_tw") value=$4
-                }
-                END { print value == "" ? "en" : value }
-            ' "$language_mount/firstboot.txt")
-        fi
+        nanokvm_parse_language "$language_mount/firstboot.txt"
         umount "$language_mount" || nanokvm_die "cannot release language inspection mount"
     fi
     rmdir "$language_mount" 2>/dev/null || true
@@ -93,18 +355,47 @@ nanokvm_partition_size() {
 }
 
 nanokvm_filesystem_type() {
-    blkid -p -s TYPE -o value "$1" 2>/dev/null || true
+    # An initialized userdata holds ext4 or f2fs; probing only those is much
+    # cheaper. Anything else needs the full probe: an unknown filesystem must
+    # never look empty. On a partition the filtered probe still succeeds with
+    # the partition table entry and no type, so test the type, not the status.
+    fs_type=$(blkid -p -n ext4,f2fs -s TYPE -o value "$1" 2>/dev/null || true)
+    [ -n "$fs_type" ] ||
+        fs_type=$(blkid -p -s TYPE -o value "$1" 2>/dev/null || true)
+    printf '%s\n' "$fs_type"
+}
+
+nanokvm_oled_module=/usr/lib/onekvm-initramfs/onekvm-installing-oled.ko
+nanokvm_oled_param=/sys/module/onekvm_installing_oled/parameters/state
+
+nanokvm_oled_state() {
+    [ "${oled_loaded:-false}" = true ] || return 0
+    printf '%s %s\n' "$1" "$2" >"$nanokvm_oled_param" 2>/dev/null ||
+        info "OneKVM: could not update the Installing OLED"
 }
 
 nanokvm_start_oled() {
     oled_loaded=false
     [ "$storage_media" = nanokvm ] || return 0
-    if insmod /usr/lib/onekvm-initramfs/onekvm-installing-oled.ko mode=install 2>/dev/null; then
+    if insmod "$nanokvm_oled_module" mode=install step="${nanokvm_oled_step:-0}" 2>/dev/null; then
         oled_loaded=true
-        msg "OneKVM: Install OS OLED canvas enabled (3 second blink)"
+        msg "OneKVM: Install OS OLED screen enabled"
     else
         info "OneKVM: Installing OLED is not available on this board"
     fi
+}
+
+# Show where setup stopped. The module exists only in NanoKVM initramfs, so
+# this also covers failures before the boot medium is identified.
+nanokvm_oled_error() {
+    if [ "${oled_loaded:-false}" = true ]; then
+        nanokvm_oled_state error "${nanokvm_oled_step:-0}"
+        return 0
+    fi
+    [ -f "$nanokvm_oled_module" ] || return 0
+    case "${storage_media:-nanokvm}" in nanokvm) ;; *) return 0 ;; esac
+    insmod "$nanokvm_oled_module" mode=error step="${nanokvm_oled_step:-0}" 2>/dev/null &&
+        oled_loaded=true
 }
 
 nanokvm_stop_oled() {
@@ -115,34 +406,65 @@ nanokvm_stop_oled() {
     fi
 }
 
+# Read COUNT little-endian 16-bit words at byte OFFSET of DEVICE into
+# root_words, lowest word first.
+nanokvm_read_words() {
+    set -- $(dd if="$1" bs=1 skip="$2" count=$(($3 * 2)) 2>/dev/null |
+        od -d | sed -n '1p')
+    shift
+    case "$*" in
+        ''|*[!0-9\ ]*) nanokvm_die "could not read the rootfs A image header" ;;
+    esac
+    root_words=$*
+}
+
+# Bytes used by the read-only root image in DEVICE of TYPE. Images stay below
+# 4 GiB. SquashFS: bytes_used, le64 at offset 40. EROFS: blocks_lo (le32 at
+# superblock + 36) << blkszbits (u8 at superblock + 12), superblock at 1024;
+# 48-bit block counts are rejected.
+nanokvm_root_bytes() {
+    case "$2" in
+        squashfs)
+            nanokvm_read_words "$1" 40 4
+            set -- $root_words
+            [ "$#" -eq 4 ] && [ "$3" -eq 0 ] && [ "$4" -eq 0 ] ||
+                nanokvm_die "rootfs A SquashFS size is invalid"
+            rootfs_bytes_used=$(($1 + $2 * 65536))
+            ;;
+        erofs)
+            nanokvm_read_words "$1" 1024 2
+            [ "$root_words" = "57826 57589" ] ||
+                nanokvm_die "rootfs A EROFS superblock is missing"
+            nanokvm_read_words "$1" 1036 1
+            root_blkszbits=$((root_words % 256))
+            nanokvm_read_words "$1" 1104 1
+            [ $((root_words & 128)) -eq 0 ] ||
+                nanokvm_die "rootfs A EROFS uses 48-bit block counts"
+            nanokvm_read_words "$1" 1060 2
+            set -- $root_words
+            [ "$#" -eq 2 ] && [ "$root_blkszbits" -ge 9 ] && [ "$root_blkszbits" -le 16 ] ||
+                nanokvm_die "rootfs A EROFS size is invalid"
+            [ "$2" -lt $((1 << (16 - root_blkszbits))) ] ||
+                nanokvm_die "rootfs A EROFS size exceeds 4 GiB"
+            rootfs_bytes_used=$((($1 + $2 * 65536) << root_blkszbits))
+            ;;
+        *) nanokvm_die "rootfs A is neither SquashFS nor EROFS" ;;
+    esac
+}
+
 nanokvm_copy_root_to_ram() {
     mkdir -p "$migration_dir"
-    # SquashFS stores bytes_used as a little-endian 64-bit value at offset 40.
-    # NanoKVM images are below 4 GiB, so the upper two 16-bit words must be 0.
-    set -- $(dd if="$root_a" bs=1 skip=40 count=8 2>/dev/null |
-        od -d | sed -n '1p')
-    [ "$#" -eq 5 ] ||
-        nanokvm_die "could not read the rootfs A SquashFS size"
-    rootfs_word0=$2
-    rootfs_word1=$3
-    rootfs_word2=$4
-    rootfs_word3=$5
-    case "$rootfs_word0:$rootfs_word1:$rootfs_word2:$rootfs_word3" in
-        *[!0-9:]*) nanokvm_die "rootfs A SquashFS size is invalid" ;;
-    esac
-    [ "$rootfs_word2" -eq 0 ] && [ "$rootfs_word3" -eq 0 ] ||
-        nanokvm_die "rootfs A SquashFS size exceeds 4 GiB"
-    rootfs_bytes_used=$((rootfs_word0 + rootfs_word1 * 65536))
+    nanokvm_root_bytes "$root_a" "$root_a_type"
     [ "$rootfs_bytes_used" -ge 4096 ] &&
         [ "$rootfs_bytes_used" -le "$root_source_bytes" ] &&
         [ "$rootfs_bytes_used" -le "$root_slot_bytes" ] ||
-        nanokvm_die "rootfs A SquashFS size is outside the source partition"
+        nanokvm_die "rootfs A image size is outside the source partition"
     root_copy_blocks=$(((rootfs_bytes_used + 1048575) / 1048576))
     root_copy_bytes=$((root_copy_blocks * 1048576))
-    # The installer carrier partition is exactly the SquashFS file size, so
-    # its final 1 MiB read is normally a short record. Installed A/B slots are
+    # The installer carrier partition is exactly the image file size, so its
+    # final 1 MiB read is normally a short record. Installed A/B slots are
     # larger and still copy a complete final block. Both cases are complete as
-    # long as every byte available up to the rounded SquashFS length was read.
+    # long as every byte available up to the rounded image length was read.
     if [ "$root_source_bytes" -lt "$root_copy_bytes" ]; then
         root_copy_bytes=$root_source_bytes
     fi
@@ -171,13 +493,14 @@ nanokvm_copy_root_to_ram() {
         nanokvm_die "rootfs A RAM copy is incomplete"
 }
 
-nanokvm_verify_squashfs() {
+# Both slots are copies of rootfs A, so they carry its filesystem type.
+nanokvm_verify_root() {
     device=$1
     name=$2
     verify_mount="$migration_dir/verify-$name"
     mkdir -p "$verify_mount"
-    mount -t squashfs -o ro "$device" "$verify_mount" ||
-        nanokvm_die "rootfs $name is not a mountable SquashFS"
+    mount -t "$root_a_type" -o ro "$device" "$verify_mount" ||
+        nanokvm_die "rootfs $name is not a mountable $root_a_type root"
     umount "$verify_mount" ||
         nanokvm_die "could not unmount verified rootfs $name"
     rmdir "$verify_mount"
@@ -299,7 +622,7 @@ nanokvm_refresh_partitions() {
     nanokvm_wait_for_block "$root_b" ||
         nanokvm_die "rootfs B partition did not appear"
     nanokvm_wait_for_block "$userdata" ||
-        nanokvm_die "userdata partition did not appear"
+        nanokvm_die_userdata "userdata partition did not appear"
 }
 
 nanokvm_rebuild_partition_table() {
@@ -331,7 +654,7 @@ EOF
     nanokvm_partition_matches 3 "$root_b_start" "$root_slot_size" ||
         nanokvm_die "rootfs B partition geometry is incorrect"
     nanokvm_partition_matches 4 "$userdata_start" "$userdata_size" ||
-        nanokvm_die "userdata partition geometry is incorrect"
+        nanokvm_die_userdata "userdata partition geometry is incorrect"
 }
 
 nanokvm_write_root_slots() {
@@ -339,7 +662,7 @@ nanokvm_write_root_slots() {
     dd if="$root_image" of="$root_b" bs=1048576 count="$root_copy_blocks" ||
         nanokvm_die "could not write rootfs B"
     sync
-    nanokvm_verify_squashfs "$root_b" B
+    nanokvm_verify_root "$root_b" B
 
     # The compact carrier's A moves after the larger installed boot partition.
     # Restore both slots from the protected copy.
@@ -347,7 +670,7 @@ nanokvm_write_root_slots() {
     dd if="$root_image" of="$root_a" bs=1048576 count="$root_copy_blocks" ||
         nanokvm_die "could not restore rootfs A"
     sync
-    nanokvm_verify_squashfs "$root_a" A
+    nanokvm_verify_root "$root_a" A
 }
 
 nanokvm_make_userdata() {
@@ -357,12 +680,12 @@ nanokvm_make_userdata() {
     mkfs.f2fs -f -l userdata \
         -U "$userdata_uuid" \
         "$userdata" >/dev/null ||
-        nanokvm_die "could not create the userdata filesystem"
+        nanokvm_die_userdata "could not create the userdata filesystem"
 
     verify_mount="$migration_dir/verify-userdata"
     mkdir -p "$verify_mount"
     mount -t f2fs -o rw "$userdata" "$verify_mount" ||
-        nanokvm_die "userdata is not a mountable f2fs filesystem"
+        nanokvm_die_userdata "userdata is not a mountable f2fs filesystem"
     sync
     umount "$verify_mount" ||
         nanokvm_die "could not unmount verified userdata"
@@ -419,7 +742,7 @@ nanokvm_run() {
     loader_type=c
     [ "$storage_media" = nanokvm ] || loader_type=e
     migration_dir=/run/onekvm-firstboot
-    root_image=$migration_dir/rootfs-a.squashfs
+    root_image=$migration_dir/rootfs-a.img
     oled_loaded=false
 
     nanokvm_wait_for_block "$disk" || nanokvm_die "SD card was not found"
@@ -428,7 +751,7 @@ nanokvm_run() {
     nanokvm_wait_for_block "$root_a" ||
         nanokvm_die "rootfs A partition was not found"
 
-    storage_kind=$(cat "/sys/class/block/$disk_name/device/type") ||
+    onekvm_read_line storage_kind "/sys/class/block/$disk_name/device/type" ||
         nanokvm_die "cannot identify storage hardware"
     case "$storage_media:$storage_kind" in
         nanokvm:SD|pro-sd:SD|pro-emmc:MMC) ;;
@@ -449,9 +772,9 @@ nanokvm_run() {
         nanokvm_die "SD card is too small for a safe userdata filesystem"
 
     # Destructive migration is allowed only from the OneKVM loader geometry,
-    # the expected rootfs start sector, and a positively identified SquashFS.
-    # The downloadable image deliberately sizes its sole rootfs partition to
-    # the SquashFS file; only the installed A/B layout uses 128 MiB slots.
+    # the expected rootfs start sector, and a positively identified read-only
+    # root. The downloadable image deliberately sizes its sole rootfs partition
+    # to the image file; only the installed A/B layout uses 128 MiB slots.
     nanokvm_partition_matches 1 "$loader_start" "$source_loader_size" ||
         nanokvm_die "unknown loader partition geometry; refusing migration"
     nanokvm_partition_starts_at 2 "$source_root_start" ||
@@ -490,6 +813,7 @@ nanokvm_run() {
             nanokvm_extend_userdata
             nanokvm_migrate_overlay
             info "OneKVM: A/B storage layout is complete"
+            nanokvm_splash_progress storage
             return 0
         fi
         [ -z "$userdata_type" ] ||
@@ -497,7 +821,10 @@ nanokvm_run() {
     fi
 
     root_a_type=$(nanokvm_filesystem_type "$root_a")
-    [ "$root_a_type" = squashfs ] || nanokvm_die "rootfs A is not SquashFS; refusing initialization"
+    case "$root_a_type" in
+        squashfs|erofs) ;;
+        *) nanokvm_die "rootfs A is neither SquashFS nor EROFS; refusing initialization" ;;
+    esac
     if [ "$storage_media" = pro-emmc ]; then
         # Linux cmdline partitions preserve the entire vendor boot prefix.
         # Never write an MBR or a partition table to this medium.
@@ -508,13 +835,14 @@ nanokvm_run() {
         nanokvm_splash install 5
         dd if="$root_image" of="$root_b" bs=1048576 count="$root_copy_blocks" || nanokvm_die "cannot initialize eMMC rootfs B"
         sync
-        nanokvm_verify_squashfs "$root_b" B
+        nanokvm_verify_root "$root_b" B
         nanokvm_splash install 6
         nanokvm_make_userdata
         nanokvm_splash install 7
         rm -f "$root_image"
         umount "$migration_dir" || nanokvm_die "cannot release migration RAM"
         rmdir "$migration_dir" 2>/dev/null || true
+        splash_progress=storage
         nanokvm_splash boot
         return 0
     fi
@@ -544,5 +872,6 @@ nanokvm_run() {
     umount "$migration_dir" || nanokvm_die "cannot release migration RAM"
     rmdir "$migration_dir" 2>/dev/null || true
     msg "OneKVM: NanoKVM A/B storage migration complete"
+    splash_progress=storage
     nanokvm_splash boot
 }

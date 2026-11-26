@@ -1,10 +1,24 @@
-"""Common 60 Hz EDID modes, grouped by nominal display aspect ratio.
+"""Common EDID modes, grouped by nominal display aspect ratio.
 
 17:9 and 21:9 include the usual DCI and ultrawide marketing ratios. Timings
 use DMT/CTA where available, otherwise reduced blanking with a 25 MHz floor.
 Adding a preset does not establish end-to-end capture support for every source.
 """
 import math
+
+# The shared factory EDID keeps 0x630C. Before per-mode IDs every SG200x
+# preset used 0x0001.
+RESERVED_PRODUCTS = {0x0000, 0x0001, 0x630C}
+
+# Receiver limits per machine catalogue: smallest and largest active size,
+# pixel clock ceiling (kHz) and whether 1920x1080p90 is included.
+MACHINE_LIMITS = {
+    'sg200x': ((1, 1), (2880, 1620), 165000, True),
+    'pro': ((1, 1), (3840, 2160), 297000, True),
+    # Both PicoKVM bridges feed a 1920x1080 encoder. TC358743 accepts
+    # 640x350 to 165 MHz, and its four 594 Mbps CSI lanes stop below 1080p90.
+    'picokvm': ((640, 350), (1920, 1080), 165000, False),
+}
 
 
 RESOLUTIONS = {
@@ -31,7 +45,11 @@ STANDARD = {
 }
 
 
-def mode_timing(width, height, aspect):
+def mode_timing(width, height, aspect, refresh=60):
+    if (width, height, refresh) == (1920, 1080, 90):
+        return 222750, 280, 88, 44, 45, 4, 5, 0x1E
+    if refresh != 60:
+        raise ValueError("unsupported refresh rate")
     if (width, height) in STANDARD:
         return STANDARD[width, height]
     # A 460 us minimum vertical blank; 48/32/80 horizontal porches/sync.
@@ -46,8 +64,21 @@ def mode_timing(width, height, aspect):
         hb += 8
 
 
-def generate_mode(width, height, aspect, pro):
-    clock, hb, hf, hs, vb, vf, vs, flags = mode_timing(width, height, aspect)
+def product_id(width, height, refresh):
+    """PnP product ID of one mode. Windows caches EDIDs per product ID, so a
+    preset that changes the mode needs an ID of its own."""
+    crc = 0xFFFF
+    for byte in f'{width}x{height}p{refresh}'.encode():
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = (crc << 1 ^ 0x1021 if crc & 0x8000 else crc << 1) & 0xFFFF
+    if crc in RESERVED_PRODUCTS:
+        raise ValueError(f'{width}x{height}p{refresh} hashes to a reserved product ID')
+    return crc
+
+
+def generate_mode(width, height, aspect, refresh=60):
+    clock, hb, hf, hs, vb, vf, vs, flags = mode_timing(width, height, aspect, refresh)
     dtd = bytearray(18)
     dtd[:2] = (round(clock / 10)).to_bytes(2, 'little')
     dtd[2:8] = bytes((width & 255, hb & 255, (width >> 8) << 4 | hb >> 8,
@@ -62,23 +93,27 @@ def generate_mode(width, height, aspect, pro):
     base = bytearray(128)
     base[:8] = bytes.fromhex('00ffffffffffff00')
     base[8:10] = bytes.fromhex('3d76')
-    base[10:12] = (0x630C if pro else 1).to_bytes(2, 'little')
+    base[10:12] = product_id(width, height, refresh).to_bytes(2, 'little')
     base[16:25] = bytes((1, 36, 1, 3, 0x80, wc, hc, 120, 0x0E))
     base[25:35] = bytes.fromhex('ee91a3544c99260f5054')
     base[35] = 0x20  # BIOS-safe 640x480p60 only.
     base[38:54] = b'\x01\x01' * 8
     base[54:72] = dtd
-    name = f'OKV{width}x{height}'.encode()
+    name = (f'OKV{width}x{height}' if refresh == 60 else f'OKV1080p{refresh}').encode()
     assert len(name) <= 12
     base[72:90] = b'\0\0\0\xfc\0' + (name + b'\n').ljust(13, b' ')
     max_h = max(32, math.ceil(clock / (width + hb)))
     max_clock = max(3, math.ceil(clock / 10000))
-    base[90:108] = b'\0\0\0\xfd\0' + bytes((50, 75, 15, max_h, max_clock, 0, 10)) + b' ' * 6
+    base[90:108] = b'\0\0\0\xfd\0' + bytes((50, max(75, refresh), 15, max_h, max_clock, 0, 10)) + b' ' * 6
     base[108:126] = b'\0\0\0\x10\0' + bytes(13)
     base[126] = 1
     # HDMI, VGA fallback and stereo LPCM; preferred mode stays in the base DTD.
-    blocks = bytes((0x41, 1, 0x23, 0x09, 0x04, 0x07, 0x83, 1, 0, 0,
-                    0x67, 3, 12, 0, 0x10, 0, 0, max(5, math.ceil(clock / 5000)),
+    video_modes = bytes((0x41, 1)) if refresh == 60 else bytes((0x43, 16, 4, 1))
+    # The HDMI VSDB ceiling is in 5 MHz units and must cover every mode,
+    # including the 25.175 MHz VGA fallback of a 25 MHz preferred timing.
+    tmds_limit = math.ceil(max(clock, STANDARD[640, 480][0]) / 5000)
+    blocks = video_modes + bytes((0x23, 0x09, 0x04, 0x07, 0x83, 1, 0, 0,
+                    0x67, 3, 12, 0, 0x10, 0, 0, tmds_limit,
                     0xE2, 0, 0xCA))
     cta = bytearray(128)
     cta[:4] = bytes((2, 3, 4 + len(blocks), 0xf0))
@@ -88,18 +123,30 @@ def generate_mode(width, height, aspect, pro):
     return bytes(base + cta)
 
 
-def generate_common(destination, pro):
-    skipped = {(1920, 1080)}
-    if pro:
-        skipped.add((1280, 720))  # Existing 720p60 preset retains its ID.
+def catalogue(machine):
+    """(width, height, aspect) of every p60 preset a machine ships."""
+    (min_w, min_h), (max_w, max_h), max_clock, _ = MACHINE_LIMITS[machine]
+    skipped = {(1920, 1080)}  # The shared factory EDID.
+    if machine == 'pro':
+        skipped.add((1280, 720))  # The Pro's own 720p60 preset.
     for aspect, sizes in RESOLUTIONS.items():
         for width, height in sizes:
-            clock = mode_timing(width, height, aspect)[0]
             if (width, height) in skipped:
                 continue
-            if width > (3840 if pro else 2880) or height > (2160 if pro else 1620):
+            if not (min_w <= width <= max_w and min_h <= height <= max_h):
                 continue
-            if clock > (297000 if pro else 165000):
+            if mode_timing(width, height, aspect)[0] > max_clock:
                 continue
-            (destination / f'{width}x{height}p60.edid.bin').write_bytes(
-                generate_mode(width, height, aspect, pro))
+            yield width, height, aspect
+
+
+def generate_common(destination, machine):
+    for width, height, aspect in catalogue(machine):
+        (destination / f'{width}x{height}p60.edid.bin').write_bytes(
+            generate_mode(width, height, aspect))
+
+    # Explicit high-refresh mode for UXC / Pro receivers. It exceeds the
+    # 165 MHz limit used for the ordinary SG200x preset catalogue.
+    if MACHINE_LIMITS[machine][3]:
+        (destination / '1920x1080p90.edid.bin').write_bytes(
+            generate_mode(1920, 1080, '16:9', refresh=90))

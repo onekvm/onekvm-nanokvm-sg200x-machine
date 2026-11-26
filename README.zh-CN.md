@@ -36,7 +36,7 @@ OneKVM 仍在运行，再删除 `/boot/boot_retry_time.txt`。initramfs 计数�
 make
 ```
 
-完整目标软件包由 `meta-onekvm-bsp` layer 中的 `onekvm-machine-nanokvm` 配方构建。
+完整目标软件包由 `meta-sipeed/meta-nanokvm` layer 中的 `onekvm-machine-nanokvm` 配方构建。
 Yocto 配方仍保留在 `onekvm-distro`，因为其中包含发行版专用依赖、安装路径和
 升级处理逻辑。配方继续使用现有软件包名，以保持升级兼容性。
 
@@ -45,13 +45,17 @@ Yocto 配方仍保留在 `onekvm-distro`，因为其中包含发行版专用依�
 机型配置的 `video_auto_bitrate_max_kbps` 定义自动自适应码率上限：Cube 为
 10000 kbit/s（10 Mbps），Pro 的机型检测配置为 20000 kbit/s（20 Mbps）。
 Core 取此值与视频后端上限的较小值；手动码率仍使用后端支持范围。
+`camera_max_bitrate_kbps` 为 4000 kbit/s：USB 摄像头的端点改为每 1 ms 一包，
+每秒中断从 4000 次降到 1000 次。1080p60 透传时 CPU 约 55%（每 250 µs 一包时
+接近 100%，摄像头掉帧、KVM 画面延迟变大）。
 
 ## EDID 预设
 
 机型包将对应机型的 EDID 预设安装到 `/usr/share/onekvm/edid/presets/`。
 Core 显示设置和 EDID 编辑器读取同一个目录，未安装编辑器时预设仍可使用。
-恢复出厂 EDID 使用本机型的 `factory.edid.bin`，其他机型包可在同一路径提供
-适合自身硬件的文件。
+机型包同时安装 `factory.edid.bin` 和 `1080p60.edid.bin`，所有机型是同一个
+文件（`onekvm-distro` 的 `onekvm-machine-files.inc`），恢复出厂 EDID 使用这一份；
+本仓库只提供其余适合自身硬件的预设。
 
 显示设置和编辑器按首选模式及标称刷新率，将已知预设统一显示为
 `宽×高 @ 刷新率 Hz`，`factory` 显示为“出厂预设”。
@@ -59,8 +63,6 @@ Core 显示设置和 EDID 编辑器读取同一个目录，未安装编辑器时
 
 SG200x NanoKVM 预设：
 
-- `factory.edid.bin` — 默认 1920×1080 @ 60 Hz
-- `1080p60.edid.bin` — 1920×1080 @ 60 Hz
 - `720p90.edid.bin` — 1280×720 @ 90 Hz
 - `1440p30.edid.bin` — 2560×1440 @ 30 Hz
 - `1620p30.edid.bin` — 2880×1620 @ 30 Hz（SG2002 VPSS 最大原生输出）
@@ -69,56 +71,34 @@ SG200x NanoKVM 预设：
 
 NanoKVM 与 Pro 还提供从 480p 到 1080p 的常用 60 Hz 档位，界面按
 1:1、5:4、4:3、3:2、16:10、16:9、17:9、21:9、32:9、9:16 分组。
-Pro 的竖屏最高为 1080×1920。新增预设 ID 使用 `宽x高p60`，已有 ID 保持不变。
+Pro 的竖屏最高为 1080×1920。新增预设 ID 使用 `宽x高p刷新率`，已有 ID 保持不变。
 显示设置、快捷面板和 EDID 编辑器支持按分辨率、比例、刷新率搜索。
 “常用”组通过别名指向原预设：480p/VGA/FWVGA、720p/HD、1080p/FHD、
 2K/QHD/1440p（2560×1440）、4K/UHD/2160p（3840×2160）。
 支持搜索别名及 `4K30`、`2K 60 Hz` 等简写。
-SG200x 预设限制为 2880×1620、165 MHz，Pro 为 3840×2160、297 MHz。
+普通 SG200x 预设限制为 2880×1620、165 MHz，Pro 为 3840×2160、297 MHz。
+两套预设均提供 `1920x1080p90.edid.bin`：首选 1920×1080 @ 90 Hz、
+222.75 MHz，保留 1080p60／720p60／VGA 回退模式。此高刷预设超出普通
+SG200x 预设的上限，面向 LT6911UXC／Pro 接收端；LT6911C/D 兼容性尚未验证。
+出厂默认仍为 1080p60。
 17:9、21:9 包含行业标称比例，例如 2048×1080、2560×1080。
+HDMI TMDS 时钟上限覆盖所有声明的时序，包括 VGA 回退，并按 5 MHz 单位向上取整。
+预设回归同时检查该上限和可选的 1080p90 时序。
+每个预设使用独立的 PnP 产品号（出厂预设保持 0x630C），Windows 不会沿用为其他预设
+缓存的 EDID；预设回归检查产品号不重复。
 已校验 EDID 校验和、时序及上限；非常规模式仍取决于源显卡、环出显示器与采集固件，
 预设存在不代表所有模式均已完成实机采集验证。
 
-Pro 机型包从 `share/edid/pro/` 安装的预设还包括：
-
-- `factory.edid.bin` — 默认 1920×1080 @ 60 Hz，与 `1080p60.edid.bin` 相同
-- `2160p30.edid.bin` — 首选 3840×2160 @ 30 Hz
-- `1080p60.edid.bin` — 1920×1080 @ 60 Hz
-- `1440p30.edid.bin` — 2560×1440 @ 30 Hz
-- `1440p60.edid.bin` — 2560×1440 @ 59.95 Hz（标称 60 Hz）
-- `720p60.edid.bin` — 1280×720 @ 60 Hz
-- `1080p120.edid.bin` — 首选 1920×1080 @ 120 Hz，保留 1080p60 / 720p60 回退模式
-
-独立分辨率预设声明对应首选时序及带宽更低的回退模式，并保留 BIOS 基础时序和双声道
-LPCM 音频。Pro 采集最高支持 4K30，需要选择独立的 2160p30 预设；
-默认 1080p60 预设不声明 4K 模式。
-独立的 1080p120 预设用于高刷新率输入；编码仍服从目标帧率，Pro 已验证
-120 Hz 输入、60 FPS 串流。连接环出显示器时，它也需要支持该输入模式。
-HDMI 一分二向主机
-提供所选采集端 EDID 与环出显示器共有的模式；环出显示器也支持 4K30 时，
-主机才能选择该模式。仅停止 SoC 取帧不会关闭采集桥片，也不会将采集端
-EDID 从协商中移除。使用
-`python3 tools/generate-pro-edid.py` 可重新生成；独立目录避免将 Pro 模式装入
-SG2002 的机型包。
-
-Pro 机型包将普通 1080p60 预设安装为出厂 EDID。
-共用的 `onekvm-capture-chip-init.service` 在使用新 OneKVM 数据的首次启动时、
-Core 启动前应用默认值。它先将桥片原 EDID 备份到
-`/var/lib/onekvm/edid/before-pro-default.bin`，回读校验通过后在同目录创建
-`pro-default-initialized` 标记。后续启动和软件包升级保留用户的 EDID；
-清除 OneKVM 数据也会清除标记，下次启动重新恢复首选 1080p60 的默认值。
-此过程使用桥片驱动的 EDID 操作，不替换固件代码。
-
-初始化直接单次读取 Flash 的 256 字节，不使用 `edid_snapshot`，也不在脚本中
-操作 `power` 接口。读取失败或数据不完整时停止初始化，不写 Flash 或成功标记。
-写入仍由驱动校验 Flash 回读。
+Pro 的预设和采集芯片 hook 在 `onekvm-nanokvm-pro-machine` 仓库。
 
 Pro 与 Cube/PCIe 共用采集芯片初始化服务。它在 MMF 模块和 Core 启动前按文件名
 顺序执行 `/usr/libexec/onekvm/capture-chip-init.d/` 下的可执行 hook：固件升级
-使用 `10-` 前缀，默认 EDID 使用 `20-`。任一 hook 失败会停止初始化并阻止采集启动。
+使用 `10-` 前缀，芯片信息使用 `20-`。任一 hook 失败会停止后续 hook，采集不可用；
+Core 仍会启动，网页、SSH 和屏幕照常可用。Core 不等待 MMF 模块：模块加载完成、
+加载脚本释放 LT6911 锁之后，视频源才打开。PCIe 固件 hook 遇到 C、D 或其他 UXC
+修订时不改动桥片，交由采集后端识别；只有读取失败或未知芯片才失败。
 
-固件 hook 每次初始化都应检查实际芯片；EDID 标记不能阻止后续固件升级，固件已
-匹配时跳过写入。升级校验后，Pro 和 PCIe 使用各自的桥片复位机制。Cube 没有
+固件 hook 每次初始化都应检查实际芯片，固件已匹配时跳过写入。升级校验后，Pro 和 PCIe 使用各自的桥片复位机制。Cube 没有
 可控的桥片硬件复位线：EDID API 返回 `REBOOT`，固件升级也需标记为待整机重启，
 重启后再确认生效。普通重启能否重新加载 Cube MCU、是否必须断电重启，仍需
 Cube 固件升级实机验收。Cube 的差异升级由独立的 `onekvm-capture-firmware`
@@ -149,7 +129,10 @@ Pro Desk 使用单次绘制的 RGB565 [启动画面](boot-splash/README.md)：�
 `storage/storage-layout.sh`、`storage/build-image.py` 和 firstboot hook 由
 Cube/PCIe、Pro SD、Pro eMMC 共用。profile 定义几何，root 参数选择介质和槽位，
 设备不明确时拒绝写入。SD 安装镜像首启展开；Pro eMMC 使用 cmdline 分区，保留
-厂商启动链前缀。三者均使用每槽 128 MiB 的 squashfs A/B、共享 upper/work；新 userdata 为 f2fs，
+厂商启动链前缀。`storage-layout.sh` 另为 NanoKVM Go 和 PicoKVM 的 Recovery 识别其 SD 卡：
+两者的 U-Boot 只传 `rauc.slot`，因此按设备树机型、镜像磁盘标识和精确偏移选择（Go 与
+Pro SD 偏移相同；PicoKVM 每槽 256 MiB、从扇区 294912 起，恢复出厂设置把 userdata 格式化为
+ext4）。其余三者均使用每槽 128 MiB 的 squashfs A/B、共享 upper/work；新 userdata 为 f2fs，
 已有 ext4/f2fs 保留。Cube/PCIe、Pro SD 与 Pro eMMC 安装后统一使用 128 MiB boot FAT；
 SD 发布载体的 FAT 按引导文件加少量余量生成，不填满最终分区容量。首启识别 `bootgrow`
 标记，将 rootfs 和全部引导文件（含 firstboot 配置）备份到 RAM 并校验，再建立最终分区；
@@ -167,3 +150,19 @@ OE 配方仍在 `onekvm-distro`，Pro 启动限制见
 用户空间生命周期文件使用 MIT 许可证；机器检测程序和 early OLED 内核模块
 使用 GPL-2.0-only。详见 [LICENSE](LICENSE) 和
 [LICENSES/MIT.txt](LICENSES/MIT.txt)。
+
+## 可选 SDIO Wi-Fi
+
+[官方型号对照](https://wiki.sipeed.com/hardware/en/kvm/NanoKVM_PCIe/introduction.html)
+列出的 Cube Lite/Full 不带 Wi-Fi，PCIe 可选配。共享设备树中的 SDIO 和
+`mmc-pwrseq-simple` 默认 disabled；内核在展开设备树前仅凭有效且 READY 的
+C906L PCIe 标记启用二者。Alpha 继续保留 OLED I2C1 时钟及 ATX reset 引脚保护；
+Beta、Lite 和缺失／未知标记不探测 SDIO。
+
+设备树通过 pinctrl-single 管理六根 SD1 引脚及 GPIOA26 复位线的复用，
+通过两个准确的寄存器区间只映射这七根引脚，调试接口也不访问保留区；
+同时负责复位、上电延时和 SD1 时钟。模块没有
+卡检测线且允许未安装，因此使用 `broken-cd`，不能声明 `non-removable`。
+无模块时允许存在空的 mmc1 主机；存储卡仍为 mmc0。板型检测脚本只检查该
+SDIO 主机下的实际设备，不再导出、驱动 GPIOA26，也不按单一厂商 ID 判断
+模块是否存在。模块被检测到不代表对应无线驱动和固件已支持。

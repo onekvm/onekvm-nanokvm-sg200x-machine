@@ -2,6 +2,15 @@
 # Shared by firstboot, the running system and Recovery. Never guess a disk.
 onekvm_storage_error() { echo "OneKVM storage: $*" >&2; return 1; }
 
+# VAR FILE: the first line of FILE in VAR, without starting a process. A last
+# line without a newline still counts. Every check below reads one-line sysfs
+# or cmdline files, twice per boot before the root switch; starting cat for
+# each one cost about 0.1 s per check.
+onekvm_read_line() {
+    eval "$1="
+    IFS= read -r "$1" <"$2" || eval "[ -n \"\${$1}\" ]"
+}
+
 onekvm_nanokvm_probe_geometry() {
     [ "$storage_media" = nanokvm ] || return 0
     storage_sysfs=${ONEKVM_STORAGE_SYSFS:-/sys/class/block}
@@ -9,8 +18,8 @@ onekvm_nanokvm_probe_geometry() {
     # layout so RAUC and Recovery upgrades can continue to use old devices.
     [ -r "$storage_sysfs/${disk_name}p1/start" ] || return 0
     [ -r "$storage_sysfs/${disk_name}p1/size" ] || return 0
-    old_start=$(cat "$storage_sysfs/${disk_name}p1/start") || return 0
-    old_size=$(cat "$storage_sysfs/${disk_name}p1/size") || return 0
+    onekvm_read_line old_start "$storage_sysfs/${disk_name}p1/start" || return 0
+    onekvm_read_line old_size "$storage_sysfs/${disk_name}p1/size" || return 0
     case "$old_start:$old_size" in
         1:65536)
             loader_start=1; loader_size=65536; root_a_start=67584
@@ -27,10 +36,10 @@ onekvm_storage_carrier_geometry() {
     storage_sysfs=${ONEKVM_STORAGE_SYSFS:-/sys/class/block}
     [ ! -e "$storage_sysfs/${disk_name}p3" ] &&
         [ ! -e "$storage_sysfs/${disk_name}p4" ] || return 1
-    carrier_boot_start=$(cat "$storage_sysfs/${disk_name}p1/start") || return 1
-    carrier_boot_size=$(cat "$storage_sysfs/${disk_name}p1/size") || return 1
-    carrier_root_start=$(cat "$storage_sysfs/${disk_name}p2/start") || return 1
-    carrier_root_size=$(cat "$storage_sysfs/${disk_name}p2/size") || return 1
+    onekvm_read_line carrier_boot_start "$storage_sysfs/${disk_name}p1/start" || return 1
+    onekvm_read_line carrier_boot_size "$storage_sysfs/${disk_name}p1/size" || return 1
+    onekvm_read_line carrier_root_start "$storage_sysfs/${disk_name}p2/start" || return 1
+    onekvm_read_line carrier_root_size "$storage_sysfs/${disk_name}p2/size" || return 1
     case "$carrier_boot_start:$carrier_boot_size:$carrier_root_start:$carrier_root_size" in
         *[!0-9:]*) return 1 ;;
     esac
@@ -41,15 +50,36 @@ onekvm_storage_carrier_geometry() {
         [ "$carrier_root_size" -gt 0 ] && [ "$carrier_root_size" -le "$root_slot_size" ]
 }
 
+# NanoKVM Go's U-Boot passes only rauc.slot. Its single SD card is identified by
+# the machine here and by the disk signature and exact layout in validation.
+onekvm_storage_is_go() {
+    tr '\000' '\n' <"${ONEKVM_DT_COMPATIBLE_FILE:-/proc/device-tree/compatible}" 2>/dev/null |
+        grep -qx 'sipeed,nanokvm-go'
+}
+
+# PicoKVM's U-Boot also passes only rauc.slot; the same checks apply.
+onekvm_storage_is_picokvm() {
+    tr '\000' '\n' <"${ONEKVM_DT_COMPATIBLE_FILE:-/proc/device-tree/compatible}" 2>/dev/null |
+        grep -qx 'luckfox,pico-kvm'
+}
+
 onekvm_storage_select() {
     storage_root=; storage_media=; storage_slot=; storage_geometry=
-    for storage_arg in $(cat "${ONEKVM_CMDLINE_FILE:-/proc/cmdline}"); do
+    disk=; disk_name=; loader=; root_a=; root_b=; userdata=
+    onekvm_read_line storage_cmdline "${ONEKVM_CMDLINE_FILE:-/proc/cmdline}" || return 1
+    for storage_arg in $storage_cmdline; do
         case "$storage_arg" in
             root=*) storage_root=${storage_arg#root=} ;;
             onekvm.media=*) storage_media=${storage_arg#onekvm.media=} ;;
             rauc.slot=A|rauc.slot=B) storage_slot=${storage_arg#rauc.slot=} ;;
         esac
     done
+    if [ -z "$storage_root" ] && { onekvm_storage_is_go || onekvm_storage_is_picokvm; }; then
+        case "$storage_slot" in
+            A) storage_root=/dev/mmcblk1p2 ;;
+            B) storage_root=/dev/mmcblk1p3 ;;
+        esac
+    fi
     case "$storage_root" in
         PARTUUID=4f4b5650-02|PARTUUID=4f4b5650-03)
             [ -z "$storage_media" ] || [ "$storage_media" = pro-sd ] || return 1
@@ -74,17 +104,34 @@ onekvm_storage_select() {
             [ -z "$storage_media" ] || [ "$storage_media" = nanokvm ] || return 1
             storage_media=nanokvm; disk=/dev/mmcblk0
             ;;
+        /dev/mmcblk1p2|/dev/mmcblk1p3)
+            if onekvm_storage_is_go; then
+                [ -z "$storage_media" ] || [ "$storage_media" = go-sd ] || return 1
+                storage_media=go-sd
+            elif onekvm_storage_is_picokvm; then
+                [ -z "$storage_media" ] || [ "$storage_media" = picokvm-sd ] || return 1
+                storage_media=picokvm-sd
+            else
+                return 1
+            fi
+            disk=/dev/mmcblk1
+            ;;
         *) onekvm_storage_error "unrecognized root device: $storage_root"; return 1 ;;
     esac
+    # Keep the positively identified boot volume available for diagnostics even
+    # when the slot arguments below prevent storage initialization.
+    disk_name=${disk##*/}
+    loader=${disk}p1
     case "$storage_root:$storage_slot" in
-        PARTUUID=4f4b5650-02:A|PARTUUID=4f4b5650-03:B|PARTLABEL=pro-rootfs-a:A|PARTLABEL=pro-rootfs-b:B|/dev/mmcblk0p2:A|/dev/mmcblk0p3:B) ;;
+        PARTUUID=4f4b5650-02:A|PARTUUID=4f4b5650-03:B|PARTLABEL=pro-rootfs-a:A|PARTLABEL=pro-rootfs-b:B|/dev/mmcblk0p2:A|/dev/mmcblk0p3:B|/dev/mmcblk1p2:A|/dev/mmcblk1p3:B) ;;
         *) onekvm_storage_error "root device and boot slot disagree"; return 1 ;;
     esac
-    disk_name=${disk##*/}
-    loader=${disk}p1; root_a=${disk}p2; root_b=${disk}p3; userdata=${disk}p4
-    # Cube and both Pro media use the same 128 MiB SquashFS slot capacity.
+    root_a=${disk}p2; root_b=${disk}p3; userdata=${disk}p4
+    # Cube and both Pro media use the same 128 MiB read-only root slot capacity.
     root_slot_size=262144
     root_b_gap=0
+    # File system that factory reset creates on userdata.
+    userdata_fs=f2fs
     case "$storage_media" in
         nanokvm)
             loader_start=1; loader_size=262144; root_a_start=264192
@@ -95,8 +142,22 @@ onekvm_storage_select() {
             loader_start=2048; loader_size=262144; root_a_start=264192
             userdata_uuid=4f4b5650-0000-4000-8000-000000000004
             storage_compatible='OneKVM NanoKVM Pro' ;;
+        go-sd)
+            # Same offsets as the Pro SD card.
+            loader_start=2048; loader_size=262144; root_a_start=264192
+            userdata_uuid=4f4b5647-0000-4000-8000-000000000004
+            storage_compatible='OneKVM NanoKVM Go' ;;
+        picokvm-sd)
+            # After the MBR, idbloader (sector 64) and U-Boot (sector 16384).
+            # 256 MiB slots; PicoKVM creates and mounts ext4 userdata.
+            loader_start=32768; loader_size=262144; root_a_start=294912
+            root_slot_size=524288
+            userdata_fs=ext4
+            userdata_uuid=4f4b504b-0000-4000-8000-000000000004
+            storage_compatible='OneKVM PicoKVM' ;;
         pro-emmc)
-            loader_start=306688; loader_size=262144; root_a_start=568832
+            # After the SPL/ATF/U-Boot/OP-TEE prefix. Same slot sizes as pro-sd.
+            loader_start=40960; loader_size=262144; root_a_start=303104
             userdata_uuid=4f4b5651-0000-4000-8000-000000000004
             storage_compatible='OneKVM NanoKVM Pro' ;;
     esac
@@ -108,13 +169,24 @@ onekvm_storage_select() {
 
 onekvm_storage_validate() {
     [ -b "$disk" ] || return 1
-    storage_kind=$(cat "/sys/class/block/$disk_name/device/type") || return 1
-    case "$storage_media:$storage_kind" in nanokvm:SD|pro-sd:SD|pro-emmc:MMC) ;; *) return 1 ;; esac
+    onekvm_read_line storage_kind "/sys/class/block/$disk_name/device/type" || return 1
+    case "$storage_media:$storage_kind" in nanokvm:SD|pro-sd:SD|go-sd:SD|picokvm-sd:SD|pro-emmc:MMC) ;; *) return 1 ;; esac
+    # The Go and PicoKVM have no root PARTUUID on their command line: require
+    # the image's disk ID.
+    case "$storage_media" in
+        go-sd) storage_disk_id=47564b4f ;;
+        picokvm-sd) storage_disk_id=4b504b4f ;;
+        *) storage_disk_id= ;;
+    esac
+    if [ -n "$storage_disk_id" ]; then
+        [ "$(hexdump -v -s 440 -n 4 -e '1/1 "%02x"' "$disk" 2>/dev/null)" = "$storage_disk_id" ] || return 1
+    fi
     for storage_number in 1 2 3 4; do
         storage_sys=/sys/class/block/${disk_name}p${storage_number}
-        [ "$(cat "$storage_sys/partition")" = "$storage_number" ] || return 1
-        storage_start=$(cat "$storage_sys/start") || return 1
-        storage_size=$(cat "$storage_sys/size") || return 1
+        onekvm_read_line storage_partition "$storage_sys/partition" || return 1
+        [ "$storage_partition" = "$storage_number" ] || return 1
+        onekvm_read_line storage_start "$storage_sys/start" || return 1
+        onekvm_read_line storage_size "$storage_sys/size" || return 1
         case "$storage_number" in
             1) [ "$storage_start:$storage_size" = "$loader_start:$loader_size" ] || return 1 ;;
             2) [ "$storage_start:$storage_size" = "$root_a_start:$root_slot_size" ] || return 1 ;;
